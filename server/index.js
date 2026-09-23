@@ -15,6 +15,11 @@ const ROOT = path.join(__dirname, '..', 'web');
 const CERT_DIR = path.join(__dirname, '..', 'certs');
 
 app.use(express.static(ROOT));
+app.get('/vendor/human.js', (_req, res) => {
+  const human = path.join(__dirname, '..', 'node_modules', '@vladmandic', 'human', 'dist', 'human.js');
+  if (!fs.existsSync(human)) return res.status(404).type('text/plain').send('Human não instalado. Rode npm install.');
+  res.sendFile(human);
+});
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'x.local-camera', version: '0.2.0' }));
 
 const state = {
@@ -26,7 +31,10 @@ const state = {
   bytes: 0,
   processedFrames: 0,
   faceEngine: 'LANDMARK-STUB',
-  processingMs: 0
+  processingMs: 0,
+  faceCount: 0,
+  faceDetectionMs: 0,
+  faceBackend: 'WEBGL'
 };
 
 let latestFrame = null;
@@ -71,7 +79,9 @@ app.get('/api/engine', (_req, res) => res.json({
   engine: state.faceEngine,
   processedFrames: state.processedFrames,
   processingMs: state.processingMs,
-  gpu: 'NEXT: ONNX Runtime CUDA'
+  gpu: state.faceBackend,
+  faceCount: state.faceCount,
+  faceDetectionMs: state.faceDetectionMs
 }));
 
 app.get('/api/frame.jpg', (_req, res) => {
@@ -131,6 +141,14 @@ wss.on('connection', (ws, req) => {
         state.cameraClients = Math.max(0, state.cameraClients - 1);
       }
       broadcast({ type: 'camera-status', active: state.cameraClients > 0, clients: state.cameraClients }, ws);
+      return;
+    }
+
+    if (msg.type === 'faceResult' && msg.data && typeof msg.data === 'object') {
+      state.faceCount = Number(msg.data.faceCount || 0);
+      state.faceDetectionMs = Number(msg.data.detectionMs || 0);
+      state.faceBackend = String(msg.data.backend || 'WEBGL');
+      state.faceEngine = state.faceCount > 0 ? 'FACE-LANDMARKS' : 'FACE-SCAN';
       return;
     }
 
