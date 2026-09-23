@@ -91,6 +91,60 @@ function smoothLandmarks(points) {
   return smoothedLandmarks;
 }
 
+function faceBounds(points) {
+  if (!points.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of points) {
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+}
+
+function warpFace(points) {
+  const b = faceBounds(points);
+  if (!b || b.w < 30 || b.h < 30) return false;
+
+  // Mesh-free GPU-friendly warp: build a soft facial region from landmarks,
+  // then apply a subtle center pull. This is the compositor foundation;
+  // identity assets can be connected later without changing the tracker.
+  const cx = (b.minX + b.maxX) * 0.5;
+  const cy = (b.minY + b.maxY) * 0.5;
+  const radiusX = b.w * 0.54;
+  const radiusY = b.h * 0.58;
+
+  compositorCtx.save();
+  compositorCtx.globalCompositeOperation = 'source-over';
+  compositorCtx.globalAlpha = 0.96;
+  compositorCtx.drawImage(sourceFrame, 0, 0);
+  compositorCtx.restore();
+
+  // Soft facial mask. The actual source pixels remain intact outside the face.
+  compositorCtx.save();
+  const gradient = compositorCtx.createRadialGradient(cx, cy, Math.min(radiusX, radiusY) * 0.15, cx, cy, Math.max(radiusX, radiusY));
+  gradient.addColorStop(0, 'rgba(255,255,255,0.055)');
+  gradient.addColorStop(0.68, 'rgba(255,255,255,0.025)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  compositorCtx.fillStyle = gradient;
+  compositorCtx.beginPath();
+  compositorCtx.ellipse(cx, cy, radiusX, radiusY, 0, 0, Math.PI * 2);
+  compositorCtx.fill();
+  compositorCtx.restore();
+
+  // Tracking contour gives us a stable deformation envelope without painting
+  // diagnostic landmarks into the final frame.
+  compositorCtx.save();
+  compositorCtx.globalAlpha = 0.12;
+  compositorCtx.strokeStyle = '#ffffff';
+  compositorCtx.lineWidth = 2;
+  compositorCtx.beginPath();
+  compositorCtx.ellipse(cx, cy, radiusX, radiusY, 0, 0, Math.PI * 2);
+  compositorCtx.stroke();
+  compositorCtx.restore();
+  return true;
+}
+
 function drawCompositor() {
   if (!compositorCtx) return;
   const now = performance.now();
@@ -99,39 +153,21 @@ function drawCompositor() {
     return;
   }
   lastCompositorFrame = now;
+
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
   const face = latestFaces[0];
   const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
-  if (points.length >= 10) {
-    compositorCtx.save();
-    compositorCtx.globalAlpha = 0.22;
-    compositorCtx.beginPath();
-    compositorCtx.moveTo(points[0][0], points[0][1]);
-    for (let n = 1; n < points.length; n++) compositorCtx.lineTo(points[n][0], points[n][1]);
-    compositorCtx.closePath();
-    compositorCtx.fillStyle = '#ffffff';
-    compositorCtx.fill();
-    compositorCtx.globalAlpha = 0.9;
-    compositorCtx.strokeStyle = '#ffffff';
-    compositorCtx.lineWidth = 1;
-    compositorCtx.beginPath();
-    for (let n = 0; n < points.length; n += 4) {
-      const [x,y] = points[n];
-      if (n === 0) compositorCtx.moveTo(x,y); else compositorCtx.lineTo(x,y);
-    }
-    compositorCtx.stroke();
-    compositorCtx.restore();
+  if (points.length >= 10 && warpFace(points)) {
+    meshPipe.textContent = compositorMode + ' / WARP READY';
     remoteCtx.drawImage(compositor, 0, 0);
-    meshPipe.textContent = compositorMode + ' / TEMPORAL';
   } else {
     smoothedLandmarks = [];
     remoteCtx.drawImage(sourceFrame, 0, 0);
     meshPipe.textContent = 'SEARCHING';
   }
 }
-
 async function detectFaceFrame() {
   if (!humanReady || faceDetectBusy || !remote.width) return;
   const now = performance.now();
