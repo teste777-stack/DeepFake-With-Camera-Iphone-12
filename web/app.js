@@ -102,49 +102,135 @@ function faceBounds(points) {
   return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
 }
 
+let meshTopology = null;
+let meshTopologyKey = '';
+
+function circumcircle(a, b, c) {
+  const ax = a[0], ay = a[1], bx = b[0], by = b[1], cx = c[0], cy = c[1];
+  const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+  if (Math.abs(d) < 1e-7) return null;
+  const ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d;
+  const uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d;
+  const r2 = (ux - ax) ** 2 + (uy - ay) ** 2;
+  return [ux, uy, r2];
+}
+
+function buildDelaunay(points) {
+  if (points.length < 3) return [];
+  const pts = points.map((p, i) => [p[0], p[1], i]);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p[0]); minY = Math.min(minY, p[1]);
+    maxX = Math.max(maxX, p[0]); maxY = Math.max(maxY, p[1]);
+  }
+  const d = Math.max(maxX - minX, maxY - minY) * 20 + 1;
+  const mx = (minX + maxX) * 0.5, my = (minY + maxY) * 0.5;
+  const n = pts.length;
+  pts.push([mx - d, my - d, n], [mx, my + d, n + 1], [mx + d, my - d, n + 2]);
+  let tris = [[n, n + 1, n + 2]];
+
+  for (let pi = 0; pi < n; pi++) {
+    const p = pts[pi];
+    const bad = [];
+    for (let ti = 0; ti < tris.length; ti++) {
+      const t = tris[ti], cc = circumcircle(pts[t[0]], pts[t[1]], pts[t[2]]);
+      if (cc && (p[0] - cc[0]) ** 2 + (p[1] - cc[1]) ** 2 <= cc[2] + 0.01) bad.push(ti);
+    }
+    const edges = [];
+    const edgeKey = (a,b) => a < b ? a + ':' + b : b + ':' + a;
+    for (let bi = bad.length - 1; bi >= 0; bi--) {
+      const t = tris.splice(bad[bi], 1)[0];
+      [[t[0],t[1]],[t[1],t[2]],[t[2],t[0]]].forEach(edge => {
+        const key = edgeKey(edge[0], edge[1]);
+        const idx = edges.findIndex(x => x.key === key);
+        if (idx >= 0) edges.splice(idx, 1); else edges.push({ key, edge });
+      });
+    }
+    for (const item of edges) tris.push([item.edge[0], item.edge[1], pi]);
+  }
+  return tris
+    .filter(t => t.every(i => i < n))
+    .map(t => [t[0], t[1], t[2]]);
+}
+
+function destinationPoint(p, bounds, points) {
+  const cx = (bounds.minX + bounds.maxX) * 0.5;
+  const cy = (bounds.minY + bounds.maxY) * 0.5;
+  const nx = (p[0] - cx) / Math.max(1, bounds.w);
+  const ny = (p[1] - cy) / Math.max(1, bounds.h);
+  const r2 = nx * nx + ny * ny;
+  const falloff = Math.max(0, 1 - r2 * 4.0);
+  // Very subtle live deformation; parameters are deliberately small so the
+  // mesh remains stable while giving us a real source->destination warp.
+  const strength = 0.045 * falloff;
+  return [p[0] + nx * bounds.w * strength, p[1] + ny * bounds.h * strength];
+}
+
+function warpTriangle(src, dst) {
+  const [x0,y0] = src[0], [x1,y1] = src[1], [x2,y2] = src[2];
+  const [u0,v0] = dst[0], [u1,v1] = dst[1], [u2,v2] = dst[2];
+  const den = x0*(y1-y2) + x1*(y2-y0) + x2*(y0-y1);
+  if (Math.abs(den) < 0.001) return;
+  const a = (u0*(y1-y2)+u1*(y2-y0)+u2*(y0-y1))/den;
+  const c = (u0*(x2-x1)+u1*(x0-x2)+u2*(x1-x0))/den;
+  const e = u0 - a*x0 - c*y0;
+  const b = (v0*(y1-y2)+v1*(y2-y0)+v2*(y0-y1))/den;
+  const d = (v0*(x2-x1)+v1*(x0-x2)+v2*(x1-x0))/den;
+  const f = v0 - b*x0 - d*y0;
+
+  compositorCtx.save();
+  compositorCtx.beginPath();
+  compositorCtx.moveTo(u0,v0); compositorCtx.lineTo(u1,v1); compositorCtx.lineTo(u2,v2);
+  compositorCtx.closePath();
+  compositorCtx.clip();
+  compositorCtx.setTransform(a,b,c,d,e,f);
+  compositorCtx.drawImage(sourceFrame, 0, 0);
+  compositorCtx.restore();
+}
+
 function warpFace(points) {
   const b = faceBounds(points);
   if (!b || b.w < 30 || b.h < 30) return false;
 
-  // Mesh-free GPU-friendly warp: build a soft facial region from landmarks,
-  // then apply a subtle center pull. This is the compositor foundation;
-  // identity assets can be connected later without changing the tracker.
-  const cx = (b.minX + b.maxX) * 0.5;
-  const cy = (b.minY + b.maxY) * 0.5;
-  const radiusX = b.w * 0.54;
-  const radiusY = b.h * 0.58;
+  // Build a sparse Delaunay mesh once per landmark layout. Reusing topology
+  // avoids rebuilding triangles on every frame.
+  const step = points.length > 220 ? 4 : (points.length > 100 ? 2 : 1);
+  const meshPoints = [];
+  for (let n = 0; n < points.length; n += step) meshPoints.push(points[n]);
+  if (meshPoints.length < 12) return false;
 
-  compositorCtx.save();
-  compositorCtx.globalCompositeOperation = 'source-over';
-  compositorCtx.globalAlpha = 0.96;
+  const key = meshPoints.length + ':' + Math.round(b.w) + ':' + Math.round(b.h);
+  if (!meshTopology || meshTopologyKey !== key) {
+    meshTopology = buildDelaunay(meshPoints);
+    meshTopologyKey = key;
+  }
+
+  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
-  compositorCtx.restore();
 
-  // Soft facial mask. The actual source pixels remain intact outside the face.
-  compositorCtx.save();
-  const gradient = compositorCtx.createRadialGradient(cx, cy, Math.min(radiusX, radiusY) * 0.15, cx, cy, Math.max(radiusX, radiusY));
-  gradient.addColorStop(0, 'rgba(255,255,255,0.055)');
-  gradient.addColorStop(0.68, 'rgba(255,255,255,0.025)');
-  gradient.addColorStop(1, 'rgba(255,255,255,0)');
-  compositorCtx.fillStyle = gradient;
-  compositorCtx.beginPath();
-  compositorCtx.ellipse(cx, cy, radiusX, radiusY, 0, 0, Math.PI * 2);
-  compositorCtx.fill();
-  compositorCtx.restore();
+  // Warp only the face envelope. The source remains untouched elsewhere.
+  for (const tri of meshTopology) {
+    const src = tri.map(i => meshPoints[i]);
+    const dst = src.map(p => destinationPoint(p, b, points));
+    warpTriangle(src, dst);
+  }
 
-  // Tracking contour gives us a stable deformation envelope without painting
-  // diagnostic landmarks into the final frame.
   compositorCtx.save();
-  compositorCtx.globalAlpha = 0.12;
+  compositorCtx.globalAlpha = 0.08;
   compositorCtx.strokeStyle = '#ffffff';
-  compositorCtx.lineWidth = 2;
-  compositorCtx.beginPath();
-  compositorCtx.ellipse(cx, cy, radiusX, radiusY, 0, 0, Math.PI * 2);
-  compositorCtx.stroke();
+  compositorCtx.lineWidth = 1;
+  for (const tri of meshTopology) {
+    const p0 = destinationPoint(meshPoints[tri[0]], b, points);
+    const p1 = destinationPoint(meshPoints[tri[1]], b, points);
+    const p2 = destinationPoint(meshPoints[tri[2]], b, points);
+    compositorCtx.beginPath();
+    compositorCtx.moveTo(p0[0],p0[1]); compositorCtx.lineTo(p1[0],p1[1]); compositorCtx.lineTo(p2[0],p2[1]);
+    compositorCtx.closePath();
+    compositorCtx.stroke();
+  }
   compositorCtx.restore();
   return true;
 }
-
 function drawCompositor() {
   if (!compositorCtx) return;
   const now = performance.now();
