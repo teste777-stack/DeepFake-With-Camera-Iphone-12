@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const forge = require('node-forge');
+const os = require('os');
 
 const out = path.join(__dirname, '..', 'certs');
 fs.mkdirSync(out, { recursive: true });
@@ -48,15 +49,23 @@ function createServerCert(ca) {
     { name: 'organizationName', value: 'x.local Camera' }
   ]);
   cert.setIssuer(ca.cert.subject.attributes);
+  const lanIps = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const item of list || []) {
+      if (item.family === 'IPv4' && !item.internal) lanIps.push(item.address);
+    }
+  }
+  const altNames = [
+    { type: 2, value: 'x.local' },
+    { type: 2, value: 'localhost' },
+    { type: 7, ip: '127.0.0.1' },
+    ...lanIps.map(ip => ({ type: 7, ip }))
+  ];
   cert.setExtensions([
     { name: 'basicConstraints', cA: false, critical: true },
     { name: 'keyUsage', digitalSignature: true, keyEncipherment: true, critical: true },
     { name: 'extKeyUsage', serverAuth: true, critical: true },
-    { name: 'subjectAltName', altNames: [
-      { type: 2, value: 'x.local' },
-      { type: 2, value: 'localhost' },
-      { type: 7, ip: '127.0.0.1' }
-    ] }
+    { name: 'subjectAltName', altNames }
   ]);
   cert.sign(ca.keys.privateKey, forge.md.sha256.create());
   write(keyPath, forge.pki.privateKeyToPem(keys.privateKey));
