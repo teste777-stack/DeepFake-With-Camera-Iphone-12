@@ -40,6 +40,8 @@
           <div><span>REMOTE FPS</span><b id="remoteFps">0</b></div>
           <div><span>FRAMES</span><b id="remoteFrames">0</b></div>
           <div><span>ENGINE</span><b id="engineStatus">STANDBY</b></div><div><span>PROCESS</span><b id="processMs">—</b></div>
+          <div><span>FACES</span><b id="faceCount">0</b></div>
+          <div><span>DETECT</span><b id="faceDetectMs">—</b></div>
         </div>
       </article>
     </section>
@@ -59,10 +61,14 @@
         <span>04</span><b>Face Engine</b><i id="enginePipe">FRAME DECODE</i>
       </div>
       <div class="pipeline-row">
-        <span>05</span><b>Virtual Camera / NDI / Browser</b><i>NEXT</i>
+        <span>05</span><b>Face Mesh / Compositor</b><i id="meshPipe">NEXT</i>
+      </div>
+      <div class="pipeline-row">
+        <span>06</span><b>Virtual Camera / NDI / Browser</b><i>NEXT</i>
       </div>
     </section>
   </main>
+  <script src="/vendor/human.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
