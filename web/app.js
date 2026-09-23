@@ -12,6 +12,7 @@ const remoteFps = document.getElementById('remoteFps');
 const remoteFrames = document.getElementById('remoteFrames');
 const engineStatus = document.getElementById('engineStatus');
 const enginePipe = document.getElementById('enginePipe');
+const processMs = document.getElementById('processMs');
 
 let stream = null;
 let facing = 'environment';
@@ -71,6 +72,18 @@ function connect() {
     }
   };
 }
+
+async function pollEngine() {
+  try {
+    const r = await fetch('/api/engine', { cache: 'no-store' });
+    const e = await r.json();
+    engineStatus.textContent = e.engine || 'STANDBY';
+    enginePipe.textContent = e.engine || 'BUFFER';
+    processMs.textContent = e.processingMs != null ? e.processingMs + ' ms' : '—';
+  } catch {}
+}
+setInterval(pollEngine, 500);
+pollEngine();
 
 async function startCamera() {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
