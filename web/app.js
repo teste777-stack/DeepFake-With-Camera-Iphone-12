@@ -18,7 +18,12 @@ compositor.height = remote.height;
 const compositorCtx = compositor.getContext('2d', { alpha: false });
 let latestFaces = [];
 let smoothedLandmarks = [];
-let compositorMode = 'TRACK';
+let targetFace = null;
+let targetLandmarks = [];
+let targetImage = null;
+let targetCanvas = document.createElement('canvas');
+let targetCtx = targetCanvas.getContext('2d', { alpha: false });
+let compositorMode = 'TARGET READY';
 let lastCompositorFrame = 0;
 const remoteFps = document.getElementById('remoteFps');
 const remoteFrames = document.getElementById('remoteFrames');
@@ -28,6 +33,42 @@ const processMs = document.getElementById('processMs');
 const faceCountEl = document.getElementById('faceCount');
 const faceDetectMsEl = document.getElementById('faceDetectMs');
 const meshPipe = document.getElementById('meshPipe');
+const targetInput = document.createElement('input');
+targetInput.type = 'file';
+targetInput.accept = 'image/*';
+targetInput.style.display = 'none';
+document.body.appendChild(targetInput);
+
+const targetButton = document.createElement('button');
+targetButton.textContent = 'LOAD TARGET';
+targetButton.className = 'secondary';
+targetButton.style.marginTop = '8px';
+const controls = document.querySelector('.controls');
+if (controls) controls.appendChild(targetButton);
+
+targetButton.onclick = () => targetInput.click();
+targetInput.onchange = async () => {
+  const file = targetInput.files?.[0];
+  if (!file) return;
+  try {
+    const bitmap = await createImageBitmap(file);
+    targetCanvas.width = remote.width;
+    targetCanvas.height = remote.height;
+    targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+    const scale = Math.max(targetCanvas.width / bitmap.width, targetCanvas.height / bitmap.height);
+    const w = bitmap.width * scale, h = bitmap.height * scale;
+    targetCtx.drawImage(bitmap, (targetCanvas.width - w) * 0.5, (targetCanvas.height - h) * 0.5, w, h);
+    bitmap.close();
+    targetImage = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
+    targetButton.textContent = 'TARGET LOADED';
+    meshPipe.textContent = 'TARGET READY';
+  } catch {
+    targetImage = null;
+    targetButton.textContent = 'TARGET ERROR';
+  }
+};
+
+
 
 let human = null;
 let humanReady = false;
@@ -272,12 +313,27 @@ function warpFace(points) {
 
   const expressions = estimateExpressions(points, b);
 
-  // Warp only the face envelope. Expression response changes deformation
-  // strength without changing the mesh topology.
-  for (const tri of meshTopology) {
-    const src = tri.map(i => meshPoints[i]);
-    const dst = src.map(p => destinationPoint(p, b, points, expressions));
-    warpTriangle(src, dst);
+  // Keep the live camera as the base. When a target image is loaded, use the
+  // tracked face envelope to blend a target identity region into the same pose.
+  // This is an opt-in local preview path; no image leaves the browser.
+  if (targetImage) {
+    const faceX = b.minX - b.w * 0.08;
+    const faceY = b.minY - b.h * 0.08;
+    const faceW = b.w * 1.16;
+    const faceH = b.h * 1.16;
+    compositorCtx.save();
+    compositorCtx.globalAlpha = 0.86;
+    compositorCtx.beginPath();
+    compositorCtx.ellipse((b.minX+b.maxX)/2, (b.minY+b.maxY)/2, faceW*0.5, faceH*0.5, 0, 0, Math.PI*2);
+    compositorCtx.clip();
+    compositorCtx.drawImage(targetCanvas, faceX, faceY, faceW, faceH);
+    compositorCtx.restore();
+  } else {
+    for (const tri of meshTopology) {
+      const src = tri.map(i => meshPoints[i]);
+      const dst = src.map(p => destinationPoint(p, b, points, expressions));
+      warpTriangle(src, dst);
+    }
   }
 
   compositorCtx.save();
@@ -311,7 +367,7 @@ function drawCompositor() {
   const face = latestFaces[0];
   const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
   if (points.length >= 10 && warpFace(points)) {
-    meshPipe.textContent = compositorMode + ' / WARP READY';
+    meshPipe.textContent = targetImage ? 'TARGET / EXPRESSION LOCK' : compositorMode + ' / WARP READY';
     remoteCtx.drawImage(compositor, 0, 0);
   } else {
     smoothedLandmarks = [];
