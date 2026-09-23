@@ -106,3 +106,42 @@ O objetivo é manter o processamento local no PC e deixar o iPhone apenas como c
 O bridge agora possui um estágio de processamento local real: o frame JPEG recebido é decodificado no PC e normalizado antes do futuro detector facial. O estágio foi isolado para que ONNX Runtime/CUDA possa substituir o `FRAME-DECODE` sem alterar o transporte do iPhone.
 
 Próxima troca do estágio: `FRAME-DECODE → Face Detector → Landmarks → Face Engine CUDA → compositor`.
+
+
+## Face pipeline v0.4
+
+Agora o painel do PC possui um detector facial e face mesh reais usando **Human** com backend **WebGL** do Chromium/Electron. O detector roda no PC sobre o frame recebido do iPhone; o telefone continua sendo apenas a câmera de entrada.
+
+O pipeline passou a ser:
+
+```text
+iPhone
+  ↓
+getUserMedia
+  ↓
+WSS / JPEG
+  ↓
+Node Frame Buffer
+  ↓
+Electron Canvas
+  ↓
+Human / WebGL
+  ↓
+Face Detector
+  ↓
+Face Mesh / Landmarks
+  ↓
+[ próximo: face compositor / identidade ]
+  ↓
+Virtual Camera / NDI / Browser
+```
+
+O painel agora mostra quantidade de faces, tempo de detecção e estado do detector/landmarks.
+
+### Modelos
+
+A biblioteca Human usa modelos de visão facial e suporta WebGL no navegador/Electron. Os modelos são armazenados em cache pelo navegador depois do primeiro carregamento. A primeira inicialização precisa acessar o repositório de modelos; depois o cache pode ser reutilizado.
+
+A escolha por WebGL nesta etapa é intencional: o binding oficial `onnxruntime-node` não fornece CUDA pré-compilado para Windows x64, enquanto o Chromium/Electron pode executar o pipeline Human com WebGL. Isso evita colocar agora um runtime CUDA incompatível no Node principal.
+
+Fonte técnica: documentação oficial do ONNX Runtime e documentação do Human.
