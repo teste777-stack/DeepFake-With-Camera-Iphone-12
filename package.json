@@ -1,0 +1,18 @@
+{
+  "name":"deepfake-with-camera-iphone-12",
+  "version":"0.1.0",
+  "private":true,
+  "main":"electron/main.js",
+  "scripts":{
+    "start":"electron .",
+    "start:server":"node server/index.js",
+    "cert:generate":"node scripts/generate-cert.js"
+  },
+  "dependencies":{
+    "express":"^5.1.0",
+    "selfsigned":"^2.4.1"
+  },
+  "devDependencies":{
+    "electron":"^28.2.1"
+  }
+}
