@@ -153,19 +153,50 @@ function buildDelaunay(points) {
     .map(t => [t[0], t[1], t[2]]);
 }
 
-function destinationPoint(p, bounds, points) {
-  const cx = (bounds.minX + bounds.maxX) * 0.5;
-  const cy = (bounds.minY + bounds.maxY) * 0.5;
-  const nx = (p[0] - cx) / Math.max(1, bounds.w);
-  const ny = (p[1] - cy) / Math.max(1, bounds.h);
-  const r2 = nx * nx + ny * ny;
-  const falloff = Math.max(0, 1 - r2 * 4.0);
-  // Very subtle live deformation; parameters are deliberately small so the
-  // mesh remains stable while giving us a real source->destination warp.
-  const strength = 0.045 * falloff;
-  return [p[0] + nx * bounds.w * strength, p[1] + ny * bounds.h * strength];
+function regionInfluence(nx, ny, cx, cy, rx, ry) {
+  const dx = (nx - cx) / Math.max(0.001, rx);
+  const dy = (ny - cy) / Math.max(0.001, ry);
+  return Math.exp(-(dx * dx + dy * dy) * 2.2);
 }
 
+function destinationPoint(p, bounds, points) {
+  const nx = (p[0] - bounds.minX) / Math.max(1, bounds.w);
+  const ny = (p[1] - bounds.minY) / Math.max(1, bounds.h);
+
+  // Region-aware facial deformation. Coordinates are derived from the live
+  // face envelope, so this works across different resolutions and faces
+  // without relying on a hard-coded landmark numbering scheme.
+  let dx = 0;
+  let dy = 0;
+
+  // Eyes: gentle lateral opening around the upper-middle face.
+  const leftEye = regionInfluence(nx, ny, 0.33, 0.39, 0.19, 0.10);
+  const rightEye = regionInfluence(nx, ny, 0.67, 0.39, 0.19, 0.10);
+  dx += (nx < 0.5 ? -1 : 1) * (leftEye + rightEye) * bounds.w * 0.018;
+
+  // Nose: subtle center lift/forward-looking shape in the middle region.
+  const nose = regionInfluence(nx, ny, 0.50, 0.53, 0.15, 0.20);
+  dy -= nose * bounds.h * 0.012;
+
+  // Mouth: localized horizontal expansion with a tiny vertical relaxation.
+  const mouth = regionInfluence(nx, ny, 0.50, 0.73, 0.25, 0.12);
+  dx += (nx - 0.5) * mouth * bounds.w * 0.075;
+  dy += (0.5 - ny) * mouth * bounds.h * 0.018;
+
+  // Jaw: small inward pull near the lower sides, preserving the center.
+  const jawY = Math.max(0, (ny - 0.70) / 0.30);
+  const jawSide = Math.abs(nx - 0.5) * 2;
+  const jaw = jawY * jawSide;
+  dx -= Math.sign(nx - 0.5) * jaw * bounds.w * 0.018;
+
+  // Blend a very small global envelope so transitions between regions stay
+  // continuous and do not produce triangle seams.
+  const envelope = Math.max(0, 1 - (((nx - 0.5) / 0.58) ** 2 + ((ny - 0.52) / 0.62) ** 2));
+  dx += (nx - 0.5) * bounds.w * 0.012 * envelope;
+  dy += (ny - 0.52) * bounds.h * 0.008 * envelope;
+
+  return [p[0] + dx, p[1] + dy];
+}
 function warpTriangle(src, dst) {
   const [x0,y0] = src[0], [x1,y1] = src[1], [x2,y2] = src[2];
   const [u0,v0] = dst[0], [u1,v1] = dst[1], [u2,v2] = dst[2];
