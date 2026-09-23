@@ -13,6 +13,78 @@ const remoteFrames = document.getElementById('remoteFrames');
 const engineStatus = document.getElementById('engineStatus');
 const enginePipe = document.getElementById('enginePipe');
 const processMs = document.getElementById('processMs');
+const faceCountEl = document.getElementById('faceCount');
+const faceDetectMsEl = document.getElementById('faceDetectMs');
+const meshPipe = document.getElementById('meshPipe');
+
+let human = null;
+let humanReady = false;
+let faceDetectBusy = false;
+let lastFaceDetect = 0;
+
+const humanConfig = {
+  backend: 'webgl',
+  debug: false,
+  modelBasePath: 'https://vladmandic.github.io/human-models/models/',
+  cacheModels: true,
+  face: {
+    enabled: true,
+    detector: { enabled: true, rotation: true, return: true, maxDetected: 1, minConfidence: 0.5 },
+    mesh: { enabled: true },
+    iris: { enabled: false },
+    emotion: { enabled: false },
+    description: { enabled: false },
+    antispoof: { enabled: false },
+    liveness: { enabled: false }
+  },
+  body: { enabled: false },
+  hand: { enabled: false },
+  object: { enabled: false },
+  gesture: { enabled: false }
+};
+
+async function initFaceEngine() {
+  if (!window.Human?.Human) throw new Error('Human.js não carregou');
+  human = new Human.Human(humanConfig);
+  engineStatus.textContent = 'LOADING FACE';
+  enginePipe.textContent = 'LOADING';
+  await human.load();
+  await human.warmup();
+  humanReady = true;
+  engineStatus.textContent = 'FACE ENGINE WEBGL';
+  enginePipe.textContent = 'FACE DETECTOR';
+}
+
+async function detectFaceFrame() {
+  if (!humanReady || faceDetectBusy || !remote.width) return;
+  const now = performance.now();
+  if (now - lastFaceDetect < 66) return;
+  lastFaceDetect = now;
+  faceDetectBusy = true;
+  const t0 = performance.now();
+  try {
+    const result = await human.detect(remote);
+    const faces = result?.face || [];
+    const count = Array.isArray(faces) ? faces.length : 0;
+    const ms = Number((performance.now() - t0).toFixed(2));
+    faceCountEl.textContent = String(count);
+    faceDetectMsEl.textContent = ms + ' ms';
+    meshPipe.textContent = count ? 'LANDMARKS LIVE' : 'SEARCHING';
+    engineStatus.textContent = count ? 'FACE-LANDMARKS' : 'FACE-SCAN';
+    enginePipe.textContent = count ? 'LANDMARKS' : 'FACE DETECTOR';
+    ws?.send(JSON.stringify({ type: 'faceResult', data: {
+      faceCount: count,
+      detectionMs: ms,
+      backend: 'WEBGL'
+    }}));
+    if (count) human.draw.face(remote, faces);
+  } catch (err) {
+    engineStatus.textContent = 'FACE ENGINE ERROR';
+    meshPipe.textContent = 'ERROR';
+  } finally {
+    faceDetectBusy = false;
+  }
+}
 
 let stream = null;
 let facing = 'environment';
@@ -59,6 +131,7 @@ function connect() {
         const bitmap = await createImageBitmap(blob);
         remoteCtx.drawImage(bitmap, 0, 0, remote.width, remote.height);
         bitmap.close();
+        detectFaceFrame();
       } catch {}
       remoteBusy = false;
     }
@@ -174,3 +247,8 @@ flip.onclick = () => {
 };
 
 connect();
+initFaceEngine().catch(err => {
+  console.error(err);
+  engineStatus.textContent = 'FACE ENGINE OFFLINE';
+  enginePipe.textContent = 'UNAVAILABLE';
+});
