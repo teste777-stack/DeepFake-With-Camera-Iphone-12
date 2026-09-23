@@ -100,3 +100,9 @@ output frame
 ```
 
 O objetivo é manter o processamento local no PC e deixar o iPhone apenas como câmera de entrada.
+
+## Face pipeline v0.3
+
+O bridge agora possui um estágio de processamento local real: o frame JPEG recebido é decodificado no PC e normalizado antes do futuro detector facial. O estágio foi isolado para que ONNX Runtime/CUDA possa substituir o `FRAME-DECODE` sem alterar o transporte do iPhone.
+
+Próxima troca do estágio: `FRAME-DECODE → Face Detector → Landmarks → Face Engine CUDA → compositor`.
