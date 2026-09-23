@@ -1,38 +1,68 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>x.local Camera</title>
-<link rel="stylesheet" href="/style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>x.local Camera</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<main>
-  <header>
-    <div>
-      <span class="eyebrow">DEEPFAKE CAMERA</span>
-      <h1>x.local</h1>
-    </div>
-    <span id="status" class="status">aguardando câmera</span>
-  </header>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">X.LOCAL / CAMERA BRIDGE</div>
+        <h1>iPhone → PC</h1>
+      </div>
+      <div id="status" class="status">OFFLINE</div>
+    </header>
 
-  <section class="viewer">
-    <video id="preview" autoplay playsinline muted></video>
-    <div id="placeholder">Toque em “Ativar câmera”</div>
-  </section>
+    <section class="grid">
+      <article class="card">
+        <div class="card-title">CÂMERA DO IPHONE</div>
+        <video id="preview" autoplay playsinline muted></video>
+        <div id="placeholder" class="placeholder">CÂMERA DESLIGADA</div>
+        <div class="controls">
+          <button id="start">ATIVAR CÂMERA</button>
+          <button id="stop" disabled>PARAR</button>
+          <button id="flip" disabled>VIRAR CÂMERA</button>
+        </div>
+        <div class="info">
+          <div><span>INPUT</span><b id="source">—</b></div>
+          <div><span>CAPTURE</span><b id="resolution">—</b></div>
+          <div><span>TRANSPORT</span><b>WSS / JPEG</b></div>
+        </div>
+      </article>
 
-  <section class="controls">
-    <button id="start">Ativar câmera</button>
-    <button id="stop" disabled>Parar</button>
-    <button id="flip" disabled>Virar câmera</button>
-  </section>
+      <article class="card">
+        <div class="card-title">REMOTE FRAME / PC</div>
+        <canvas id="remotePreview" width="640" height="360"></canvas>
+        <div class="info">
+          <div><span>REMOTE FPS</span><b id="remoteFps">0</b></div>
+          <div><span>FRAMES</span><b id="remoteFrames">0</b></div>
+          <div><span>ENGINE</span><b id="engineStatus">STANDBY</b></div>
+        </div>
+      </article>
+    </section>
 
-  <section class="info">
-    <div><b>Fonte</b><span id="source">—</span></div>
-    <div><b>Resolução</b><span id="resolution">—</span></div>
-    <div><b>Pronto para engine</b><span>WebRTC / WebSocket</span></div>
-  </section>
-</main>
-<script src="/app.js"></script>
+    <section class="card pipeline">
+      <div class="card-title">PIPELINE</div>
+      <div class="pipeline-row">
+        <span>01</span><b>iPhone getUserMedia</b><i>LIVE</i>
+      </div>
+      <div class="pipeline-row">
+        <span>02</span><b>x.local / WSS</b><i>LIVE</i>
+      </div>
+      <div class="pipeline-row">
+        <span>03</span><b>Frame Buffer</b><i>READY</i>
+      </div>
+      <div class="pipeline-row">
+        <span>04</span><b>Face Engine</b><i id="enginePipe">NEXT</i>
+      </div>
+      <div class="pipeline-row">
+        <span>05</span><b>Virtual Camera / NDI / Browser</b><i>NEXT</i>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
 </body>
 </html>
