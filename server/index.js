@@ -70,10 +70,11 @@ app.get('/api/frame.jpg', (_req, res) => {
   res.end(latestFrame);
 });
 
-app.get('/ca.crt', (_req, res) => {
+app.get(['/ca.crt', '/ca.cer'], (_req, res) => {
   const ca = path.join(CERT_DIR, 'x-local-ca.pem');
   if (!fs.existsSync(ca)) return res.status(404).send('CA ausente. Rode npm run cert:generate');
-  res.type('application/x-x509-ca-cert');
+  res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+  res.setHeader('Content-Disposition', 'attachment; filename="x-local-ca.cer"');
   res.sendFile(ca);
 });
 
