@@ -1,0 +1,5 @@
+node_modules/
+certs/*.pem
+certs/*.key
+.DS_Store
+npm-debug.log*
