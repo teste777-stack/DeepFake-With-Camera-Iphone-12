@@ -159,38 +159,69 @@ function regionInfluence(nx, ny, cx, cy, rx, ry) {
   return Math.exp(-(dx * dx + dy * dy) * 2.2);
 }
 
-function destinationPoint(p, bounds, points) {
+function estimateExpressions(points, bounds) {
+  const region = (cx, cy, rx, ry) => points.filter(p => {
+    const x = (p[0] - bounds.minX) / Math.max(1, bounds.w);
+    const y = (p[1] - bounds.minY) / Math.max(1, bounds.h);
+    return Math.abs(x - cx) < rx && Math.abs(y - cy) < ry;
+  });
+
+  const eyeL = region(0.33, 0.39, 0.16, 0.10);
+  const eyeR = region(0.67, 0.39, 0.16, 0.10);
+  const mouthPts = region(0.50, 0.73, 0.22, 0.13);
+
+  const spreadY = arr => {
+    if (arr.length < 4) return 0;
+    let min = Infinity, max = -Infinity;
+    for (const p of arr) {
+      const y = (p[1] - bounds.minY) / Math.max(1, bounds.h);
+      min = Math.min(min, y); max = Math.max(max, y);
+    }
+    return Math.max(0, Math.min(1, (max - min - 0.025) / 0.11));
+  };
+
+  const spreadX = arr => {
+    if (arr.length < 4) return 0;
+    let min = Infinity, max = -Infinity;
+    for (const p of arr) {
+      const x = (p[0] - bounds.minX) / Math.max(1, bounds.w);
+      min = Math.min(min, x); max = Math.max(max, x);
+    }
+    return Math.max(0, Math.min(1, (max - min - 0.10) / 0.28));
+  };
+
+  return {
+    mouthOpen: spreadY(mouthPts),
+    eyeOpen: (spreadY(eyeL) + spreadY(eyeR)) * 0.5,
+    smile: spreadX(mouthPts)
+  };
+}
+
+function destinationPoint(p, bounds, points, expressions) {
   const nx = (p[0] - bounds.minX) / Math.max(1, bounds.w);
   const ny = (p[1] - bounds.minY) / Math.max(1, bounds.h);
 
-  // Region-aware facial deformation. Coordinates are derived from the live
-  // face envelope, so this works across different resolutions and faces
-  // without relying on a hard-coded landmark numbering scheme.
   let dx = 0;
   let dy = 0;
 
-  // Eyes: gentle lateral opening around the upper-middle face.
   const leftEye = regionInfluence(nx, ny, 0.33, 0.39, 0.19, 0.10);
   const rightEye = regionInfluence(nx, ny, 0.67, 0.39, 0.19, 0.10);
-  dx += (nx < 0.5 ? -1 : 1) * (leftEye + rightEye) * bounds.w * 0.018;
+  const eyeGain = 0.65 + expressions.eyeOpen * 0.55;
+  dx += (nx < 0.5 ? -1 : 1) * (leftEye + rightEye) * bounds.w * 0.018 * eyeGain;
 
-  // Nose: subtle center lift/forward-looking shape in the middle region.
   const nose = regionInfluence(nx, ny, 0.50, 0.53, 0.15, 0.20);
   dy -= nose * bounds.h * 0.012;
 
-  // Mouth: localized horizontal expansion with a tiny vertical relaxation.
   const mouth = regionInfluence(nx, ny, 0.50, 0.73, 0.25, 0.12);
-  dx += (nx - 0.5) * mouth * bounds.w * 0.075;
-  dy += (0.5 - ny) * mouth * bounds.h * 0.018;
+  const mouthGain = 0.7 + expressions.mouthOpen * 0.8;
+  dx += (nx - 0.5) * mouth * bounds.w * (0.055 + expressions.smile * 0.045) * mouthGain;
+  dy += (0.5 - ny) * mouth * bounds.h * (0.014 + expressions.mouthOpen * 0.018);
 
-  // Jaw: small inward pull near the lower sides, preserving the center.
   const jawY = Math.max(0, (ny - 0.70) / 0.30);
   const jawSide = Math.abs(nx - 0.5) * 2;
   const jaw = jawY * jawSide;
   dx -= Math.sign(nx - 0.5) * jaw * bounds.w * 0.018;
 
-  // Blend a very small global envelope so transitions between regions stay
-  // continuous and do not produce triangle seams.
   const envelope = Math.max(0, 1 - (((nx - 0.5) / 0.58) ** 2 + ((ny - 0.52) / 0.62) ** 2));
   dx += (nx - 0.5) * bounds.w * 0.012 * envelope;
   dy += (ny - 0.52) * bounds.h * 0.008 * envelope;
@@ -239,10 +270,13 @@ function warpFace(points) {
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
-  // Warp only the face envelope. The source remains untouched elsewhere.
+  const expressions = estimateExpressions(points, b);
+
+  // Warp only the face envelope. Expression response changes deformation
+  // strength without changing the mesh topology.
   for (const tri of meshTopology) {
     const src = tri.map(i => meshPoints[i]);
-    const dst = src.map(p => destinationPoint(p, b, points));
+    const dst = src.map(p => destinationPoint(p, b, points, expressions));
     warpTriangle(src, dst);
   }
 
@@ -251,9 +285,9 @@ function warpFace(points) {
   compositorCtx.strokeStyle = '#ffffff';
   compositorCtx.lineWidth = 1;
   for (const tri of meshTopology) {
-    const p0 = destinationPoint(meshPoints[tri[0]], b, points);
-    const p1 = destinationPoint(meshPoints[tri[1]], b, points);
-    const p2 = destinationPoint(meshPoints[tri[2]], b, points);
+    const p0 = destinationPoint(meshPoints[tri[0]], b, points, expressions);
+    const p1 = destinationPoint(meshPoints[tri[1]], b, points, expressions);
+    const p2 = destinationPoint(meshPoints[tri[2]], b, points, expressions);
     compositorCtx.beginPath();
     compositorCtx.moveTo(p0[0],p0[1]); compositorCtx.lineTo(p1[0],p1[1]); compositorCtx.lineTo(p2[0],p2[1]);
     compositorCtx.closePath();
