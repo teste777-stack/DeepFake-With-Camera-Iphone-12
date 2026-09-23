@@ -8,6 +8,10 @@ const stop = document.getElementById('stop');
 const flip = document.getElementById('flip');
 const remote = document.getElementById('remotePreview');
 const remoteCtx = remote.getContext('2d', { alpha: false });
+const sourceFrame = document.createElement('canvas');
+sourceFrame.width = remote.width;
+sourceFrame.height = remote.height;
+const sourceFrameCtx = sourceFrame.getContext('2d', { alpha: false });
 const compositor = document.createElement('canvas');
 compositor.width = remote.width;
 compositor.height = remote.height;
@@ -96,7 +100,7 @@ function drawCompositor() {
   }
   lastCompositorFrame = now;
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
-  compositorCtx.drawImage(remote, 0, 0);
+  compositorCtx.drawImage(sourceFrame, 0, 0);
 
   const face = latestFaces[0];
   const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
@@ -119,9 +123,11 @@ function drawCompositor() {
     }
     compositorCtx.stroke();
     compositorCtx.restore();
+    remoteCtx.drawImage(compositor, 0, 0);
     meshPipe.textContent = compositorMode + ' / TEMPORAL';
   } else {
     smoothedLandmarks = [];
+    remoteCtx.drawImage(sourceFrame, 0, 0);
     meshPipe.textContent = 'SEARCHING';
   }
 }
@@ -134,7 +140,7 @@ async function detectFaceFrame() {
   faceDetectBusy = true;
   const t0 = performance.now();
   try {
-    const result = await human.detect(remote);
+    const result = await human.detect(sourceFrame);
     const faces = Array.isArray(result?.face) ? result.face : [];
     const count = faces.length;
     latestFaces = faces;
@@ -201,7 +207,8 @@ function connect() {
       try {
         const blob = await fetch(msg.data).then(r => r.blob());
         const bitmap = await createImageBitmap(blob);
-        remoteCtx.drawImage(bitmap, 0, 0, remote.width, remote.height);
+        sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
+        remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
         bitmap.close();
         detectFaceFrame();
       } catch {}
