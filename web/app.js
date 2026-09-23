@@ -8,6 +8,14 @@ const stop = document.getElementById('stop');
 const flip = document.getElementById('flip');
 const remote = document.getElementById('remotePreview');
 const remoteCtx = remote.getContext('2d', { alpha: false });
+const compositor = document.createElement('canvas');
+compositor.width = remote.width;
+compositor.height = remote.height;
+const compositorCtx = compositor.getContext('2d', { alpha: false });
+let latestFaces = [];
+let smoothedLandmarks = [];
+let compositorMode = 'TRACK';
+let lastCompositorFrame = 0;
 const remoteFps = document.getElementById('remoteFps');
 const remoteFrames = document.getElementById('remoteFrames');
 const engineStatus = document.getElementById('engineStatus');
@@ -55,6 +63,69 @@ async function initFaceEngine() {
   enginePipe.textContent = 'FACE DETECTOR';
 }
 
+function extractLandmarks(face) {
+  const mesh = face?.mesh;
+  if (!Array.isArray(mesh) || mesh.length < 10) return [];
+  return mesh.map(p => Array.isArray(p) ? [Number(p[0]), Number(p[1])] : [Number(p.x), Number(p.y)])
+    .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+}
+
+function smoothLandmarks(points) {
+  if (!points.length) {
+    smoothedLandmarks = [];
+    return [];
+  }
+  const alpha = 0.34;
+  if (smoothedLandmarks.length !== points.length) {
+    smoothedLandmarks = points.map(p => p.slice());
+    return smoothedLandmarks;
+  }
+  for (let n = 0; n < points.length; n++) {
+    smoothedLandmarks[n][0] += (points[n][0] - smoothedLandmarks[n][0]) * alpha;
+    smoothedLandmarks[n][1] += (points[n][1] - smoothedLandmarks[n][1]) * alpha;
+  }
+  return smoothedLandmarks;
+}
+
+function drawCompositor() {
+  if (!compositorCtx) return;
+  const now = performance.now();
+  if (now - lastCompositorFrame < 33) {
+    requestAnimationFrame(drawCompositor);
+    return;
+  }
+  lastCompositorFrame = now;
+  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+  compositorCtx.drawImage(remote, 0, 0);
+
+  const face = latestFaces[0];
+  const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
+  if (points.length >= 10) {
+    compositorCtx.save();
+    compositorCtx.globalAlpha = 0.22;
+    compositorCtx.beginPath();
+    compositorCtx.moveTo(points[0][0], points[0][1]);
+    for (let n = 1; n < points.length; n++) compositorCtx.lineTo(points[n][0], points[n][1]);
+    compositorCtx.closePath();
+    compositorCtx.fillStyle = '#ffffff';
+    compositorCtx.fill();
+    compositorCtx.globalAlpha = 0.9;
+    compositorCtx.strokeStyle = '#ffffff';
+    compositorCtx.lineWidth = 1;
+    compositorCtx.beginPath();
+    for (let n = 0; n < points.length; n += 4) {
+      const [x,y] = points[n];
+      if (n === 0) compositorCtx.moveTo(x,y); else compositorCtx.lineTo(x,y);
+    }
+    compositorCtx.stroke();
+    compositorCtx.restore();
+    meshPipe.textContent = compositorMode + ' / TEMPORAL';
+  } else {
+    smoothedLandmarks = [];
+    meshPipe.textContent = 'SEARCHING';
+  }
+}
+
 async function detectFaceFrame() {
   if (!humanReady || faceDetectBusy || !remote.width) return;
   const now = performance.now();
@@ -64,8 +135,9 @@ async function detectFaceFrame() {
   const t0 = performance.now();
   try {
     const result = await human.detect(remote);
-    const faces = result?.face || [];
-    const count = Array.isArray(faces) ? faces.length : 0;
+    const faces = Array.isArray(result?.face) ? result.face : [];
+    const count = faces.length;
+    latestFaces = faces;
     const ms = Number((performance.now() - t0).toFixed(2));
     faceCountEl.textContent = String(count);
     faceDetectMsEl.textContent = ms + ' ms';
@@ -77,8 +149,8 @@ async function detectFaceFrame() {
       detectionMs: ms,
       backend: 'WEBGL'
     }}));
-    if (count) human.draw.face(remote, faces);
   } catch (err) {
+    latestFaces = [];
     engineStatus.textContent = 'FACE ENGINE ERROR';
     meshPipe.textContent = 'ERROR';
   } finally {
@@ -246,6 +318,7 @@ flip.onclick = () => {
   if (stream) startCamera();
 };
 
+requestAnimationFrame(drawCompositor);
 connect();
 initFaceEngine().catch(err => {
   console.error(err);
