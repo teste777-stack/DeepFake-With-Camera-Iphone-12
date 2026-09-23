@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
+const sharp = require('sharp');
 const WebSocket = require('ws');
 const mdns = require('multicast-dns')();
 
@@ -22,7 +23,10 @@ const state = {
   frames: 0,
   fps: 0,
   lastFrameAt: 0,
-  bytes: 0
+  bytes: 0,
+  processedFrames: 0,
+  faceEngine: 'LANDMARK-STUB',
+  processingMs: 0
 };
 
 let latestFrame = null;
@@ -62,6 +66,13 @@ app.get('/api/status', (_req, res) => {
     lastFrameAgeMs: latestFrame ? Date.now() - state.lastFrameAt : null
   });
 });
+
+app.get('/api/engine', (_req, res) => res.json({
+  engine: state.faceEngine,
+  processedFrames: state.processedFrames,
+  processingMs: state.processingMs,
+  gpu: 'NEXT: ONNX Runtime CUDA'
+}));
 
 app.get('/api/frame.jpg', (_req, res) => {
   if (!latestFrame) return res.status(404).end();
@@ -128,6 +139,7 @@ wss.on('connection', (ws, req) => {
       if (!match) return;
       latestMime = match[1];
       latestFrame = Buffer.from(match[2], 'base64');
+      processFrame(latestFrame).catch(() => {});
       state.frames++;
       state.lastFrameAt = Date.now();
       state.bytes += latestFrame.length;
@@ -183,3 +195,23 @@ setInterval(() => {
   state.fps = state._lastFrames == null ? 0 : state.frames - state._lastFrames;
   state._lastFrames = state.frames;
 }, 1000);
+
+
+let processingBusy = false;
+async function processFrame(frame) {
+  if (processingBusy) return;
+  processingBusy = true;
+  const t0 = performance.now();
+  try {
+    // Primeiro estágio real: decodifica e normaliza o frame localmente.
+    // O detector/landmarks GPU entra aqui sem alterar o transporte do iPhone.
+    const meta = await sharp(frame).metadata();
+    state.faceEngine = 'FRAME-DECODE';
+    state.processedFrames++;
+    state.processingMs = Number((performance.now() - t0).toFixed(2));
+    state.frameWidth = meta.width || 0;
+    state.frameHeight = meta.height || 0;
+  } finally {
+    processingBusy = false;
+  }
+}
