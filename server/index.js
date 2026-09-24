@@ -245,6 +245,8 @@ server.listen(PORT, HOST, () => {
   console.log('WebSocket: wss://x.local:' + PORT + '/ws');
   console.log('CA (bootstrap HTTP): http://x.local:' + BOOTSTRAP_PORT + '/ca.crt');
   console.log('Bootstrap page: http://x.local:' + BOOTSTRAP_PORT);
+  console.log('Bootstrap LAN:');
+  for (const ip of lanIPv4()) console.log('  http://' + ip + ':' + BOOTSTRAP_PORT);
   console.log('');
 });
 
