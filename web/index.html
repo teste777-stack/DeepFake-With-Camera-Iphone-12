@@ -21,6 +21,15 @@
         <div class="card-title">CÂMERA DO IPHONE</div>
         <video id="preview" autoplay playsinline muted></video>
         <div id="placeholder" class="placeholder">CÂMERA DESLIGADA</div>
+        <div class="identity-panel">
+          <div class="identity-title">SYNTHETIC IDENTITY / SEED</div>
+          <div class="identity-controls">
+            <input id="seedInput" type="number" min="0" max="2147483647" value="184729" aria-label="Seed">
+            <button id="generateFace" class="secondary">GENERATE FACE</button>
+            <button id="randomFace" class="secondary">RANDOM</button>
+          </div>
+          <div id="identityStatus" class="identity-status">NO SYNTHETIC FACE</div>
+        </div>
         <div class="controls">
           <button id="start">ATIVAR CÂMERA</button>
           <button id="stop" disabled>PARAR</button>
@@ -36,7 +45,7 @@
       <article class="card">
         <div class="card-title">REMOTE FRAME / PC</div>
         <canvas id="remotePreview" width="640" height="360"></canvas>
-        <div class="compositor-note">COMPOSITOR: TRACKING + TEMPORAL SMOOTHING</div>
+        <div class="compositor-note">COMPOSITOR: SYNTHETIC IDENTITY + TRACKING + TEMPORAL SMOOTHING</div>
         <div class="info">
           <div><span>REMOTE FPS</span><b id="remoteFps">0</b></div>
           <div><span>FRAMES</span><b id="remoteFrames">0</b></div>
