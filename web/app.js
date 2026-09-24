@@ -40,6 +40,7 @@ let identityReady = false;
 let faceTrackingReady = false;
 let lastCompositorFrame = 0;
 let syntheticMeshKey = '';
+let syntheticCanonicalLandmarks = [];
 const remoteFps = document.getElementById('remoteFps');
 const remoteFrames = document.getElementById('remoteFrames');
 const engineStatus = document.getElementById('engineStatus');
@@ -130,6 +131,7 @@ function generateSyntheticFace(seed) {
   ctx.restore();
   targetImage = targetCtx.getImageData(0,0,c.width,c.height);
   targetLandmarks=[]; targetMeshPoints=[]; targetMeshTopology=[]; targetBounds=null;
+  syntheticCanonicalLandmarks = [];
   syntheticIdentity = { seed: Number(seed) >>> 0, geometry: identityGeometry };
   syntheticMeshKey = '';
   identityReady = true;
@@ -164,6 +166,7 @@ targetInput.onchange = async () => {
     syntheticIdentity = null;
     identityReady = false;
     syntheticMeshKey = '';
+    syntheticCanonicalLandmarks = [];
     targetLandmarks = [];
     targetMeshPoints = [];
     targetMeshTopology = [];
@@ -456,26 +459,39 @@ function buildSyntheticTarget(points) {
   if (!syntheticIdentity || !points.length) return false;
   const liveBounds = faceBounds(points);
   if (!liveBounds || liveBounds.w < 30 || liveBounds.h < 30) return false;
+
   const g = syntheticIdentity.geometry;
   const sx = Math.max(80, g.faceW);
   const sy = Math.max(110, g.faceH);
-  targetLandmarks = points.map(([x, y]) => {
-    const nx = (x - liveBounds.minX) / Math.max(1, liveBounds.w);
-    const ny = (y - liveBounds.minY) / Math.max(1, liveBounds.h);
-    return [
-      g.cx - sx * 0.5 + nx * sx,
-      g.cy - sy * 0.5 + ny * sy
-    ];
-  });
-  targetBounds = faceBounds(targetLandmarks);
-  const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
-  targetMeshPoints = [];
-  for (let n = 0; n < targetLandmarks.length; n += step) targetMeshPoints.push(targetLandmarks[n]);
-  const meshKey = syntheticIdentity.seed + ':' + targetMeshPoints.length;
-  if (meshKey !== syntheticMeshKey) {
+
+  // Build the synthetic identity geometry only once per generated seed.
+  // The source mesh must stay stable while the destination mesh follows the
+  // live face. Rebuilding the source landmarks every frame caused the
+  // synthetic identity itself to deform with the camera.
+  if (!syntheticCanonicalLandmarks.length || syntheticCanonicalLandmarks.length !== points.length) {
+    syntheticCanonicalLandmarks = points.map(([x, y]) => {
+      const nx = (x - liveBounds.minX) / Math.max(1, liveBounds.w);
+      const ny = (y - liveBounds.minY) / Math.max(1, liveBounds.h);
+      return [
+        g.cx - sx * 0.5 + nx * sx,
+        g.cy - sy * 0.5 + ny * sy
+      ];
+    });
+
+    targetLandmarks = syntheticCanonicalLandmarks.map(p => p.slice());
+    targetBounds = faceBounds(targetLandmarks);
+
+    const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+    targetMeshPoints = [];
+    for (let n = 0; n < targetLandmarks.length; n += step) {
+      targetMeshPoints.push(targetLandmarks[n]);
+    }
+
+    const meshKey = syntheticIdentity.seed + ':' + targetMeshPoints.length;
     targetMeshTopology = buildDelaunay(targetMeshPoints);
     syntheticMeshKey = meshKey;
   }
+
   return targetMeshPoints.length >= 12 && targetMeshTopology.length > 0;
 }
 
