@@ -54,6 +54,94 @@ targetButton.style.marginTop = '8px';
 const controls = document.querySelector('.controls');
 if (controls) controls.appendChild(targetButton);
 
+const seedInput = document.getElementById('seedInput');
+const generateFaceButton = document.getElementById('generateFace');
+const randomFaceButton = document.getElementById('randomFace');
+const identityStatus = document.getElementById('identityStatus');
+
+function seededRandom(seed) {
+  let x = (Number(seed) >>> 0) || 1;
+  return () => {
+    x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+    return ((x >>> 0) / 4294967296);
+  };
+}
+
+function generateSyntheticFace(seed) {
+  const rand = seededRandom(seed);
+  const c = targetCanvas, ctx = targetCtx;
+  c.width = remote.width; c.height = remote.height;
+  ctx.clearRect(0, 0, c.width, c.height);
+
+  const skin = ['#e8b08c','#c98763','#f0c09b','#a96548','#d89a72'][Math.floor(rand()*5)];
+  const hair = ['#15110f','#2b211d','#3a2720','#11151b','#4a3024'][Math.floor(rand()*5)];
+  const eye = ['#24160f','#3b2a1c','#536b61','#2f4058'][Math.floor(rand()*4)];
+  const faceW = 150 + rand()*55, faceH = 205 + rand()*45;
+  const cx = c.width*.5 + (rand()-.5)*18, cy = c.height*.52;
+  const eyeY = cy - faceH*.12, eyeGap = faceW*.20;
+  const noseLen = faceH*(.18 + rand()*.05);
+  const mouthW = faceW*(.25 + rand()*.10);
+
+  const bg = ctx.createLinearGradient(0,0,0,c.height);
+  bg.addColorStop(0,'#202020'); bg.addColorStop(1,'#050505');
+  ctx.fillStyle=bg; ctx.fillRect(0,0,c.width,c.height);
+
+  const glow=ctx.createRadialGradient(cx,cy-faceH*.12,20,cx,cy,faceW*1.2);
+  glow.addColorStop(0,'rgba(255,220,190,.16)'); glow.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=glow; ctx.fillRect(0,0,c.width,c.height);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(cx,cy,faceW*.5,faceH*.5,0,0,Math.PI*2);
+  const sg=ctx.createRadialGradient(cx-faceW*.15,cy-faceH*.2,10,cx,cy,faceW*.65);
+  sg.addColorStop(0,skin); sg.addColorStop(1,'#6f4033');
+  ctx.fillStyle=sg; ctx.fill();
+  ctx.clip();
+
+  ctx.fillStyle=hair;
+  ctx.beginPath();
+  ctx.ellipse(cx,cy-faceH*.48,faceW*.59,faceH*.35,0,0,Math.PI*2); ctx.fill();
+  ctx.fillRect(cx-faceW*.59,cy-faceH*.42,faceW*1.18,faceH*.20);
+
+  const browTilt=(rand()-.5)*.16;
+  ctx.strokeStyle='#3b241d'; ctx.lineWidth=7; ctx.lineCap='round';
+  for(const side of [-1,1]){
+    ctx.beginPath(); ctx.moveTo(cx+side*eyeGap-faceW*.11,eyeY-faceH*(.08+browTilt*side));
+    ctx.lineTo(cx+side*eyeGap+faceW*.11,eyeY-faceH*(.08-browTilt*side)); ctx.stroke();
+  }
+
+  for(const side of [-1,1]){
+    const ex=cx+side*eyeGap;
+    ctx.fillStyle='#f5eee8'; ctx.beginPath(); ctx.ellipse(ex,eyeY,faceW*.105,faceH*.042,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=eye; ctx.beginPath(); ctx.arc(ex,eyeY,Math.max(5,faceW*.038),0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#050505'; ctx.beginPath(); ctx.arc(ex,eyeY,Math.max(2,faceW*.018),0,Math.PI*2); ctx.fill();
+  }
+
+  ctx.strokeStyle='rgba(85,45,35,.75)'; ctx.lineWidth=5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(cx,eyeY+10); ctx.quadraticCurveTo(cx-faceW*.025,cy-faceH*.02,cx-faceW*.01,cy+faceH*.10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx-faceW*.05,cy+faceH*.11); ctx.quadraticCurveTo(cx,cy+faceH*.14,cx+faceW*.05,cy+faceH*.11); ctx.stroke();
+
+  ctx.fillStyle='#9d554e'; ctx.beginPath();
+  ctx.ellipse(cx,cy+faceH*.23,mouthW*.5,faceH*.035,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#3a1718'; ctx.beginPath();
+  ctx.ellipse(cx,cy+faceH*.23,mouthW*.42,faceH*.015,0,0,Math.PI*2); ctx.fill();
+
+  ctx.restore();
+  targetImage = targetCtx.getImageData(0,0,c.width,c.height);
+  targetLandmarks=[]; targetMeshPoints=[]; targetMeshTopology=[]; targetBounds=null;
+  targetButton.textContent='SYNTHETIC FACE';
+  identityStatus.textContent='GENERATED / SEED ' + (Number(seed) >>> 0);
+  meshPipe.textContent='ANALYZING SYNTHETIC FACE';
+  detectTargetFace();
+}
+
+generateFaceButton?.addEventListener('click', () => generateSyntheticFace(seedInput.value));
+randomFaceButton?.addEventListener('click', () => {
+  const seed = Math.floor(Math.random()*2147483647);
+  seedInput.value = String(seed);
+  generateSyntheticFace(seed);
+});
+
 targetButton.onclick = () => targetInput.click();
 targetInput.onchange = async () => {
   const file = targetInput.files?.[0];
@@ -76,7 +164,8 @@ targetInput.onchange = async () => {
     meshPipe.textContent = 'ANALYZING TARGET';
     await detectTargetFace();
     if (targetLandmarks.length >= 10) {
-      targetButton.textContent = 'TARGET FACE READY';
+      targetButton.textContent = targetImage ? 'TARGET FACE READY' : 'TARGET FACE READY';
+      identityStatus.textContent = identityStatus.textContent.includes('GENERATED') ? identityStatus.textContent + ' / TRACKABLE' : 'TARGET FACE READY';
       meshPipe.textContent = 'TARGET FACE READY';
     } else {
       targetButton.textContent = 'TARGET FACE NOT FOUND';
