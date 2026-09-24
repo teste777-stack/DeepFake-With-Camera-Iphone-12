@@ -20,6 +20,10 @@ let latestFaces = [];
 let smoothedLandmarks = [];
 let targetFace = null;
 let targetLandmarks = [];
+let targetMeshPoints = [];
+let targetMeshTopology = [];
+let targetBounds = null;
+let targetDetectBusy = false;
 let targetImage = null;
 let targetCanvas = document.createElement('canvas');
 let targetCtx = targetCanvas.getContext('2d', { alpha: false });
@@ -60,10 +64,26 @@ targetInput.onchange = async () => {
     targetCtx.drawImage(bitmap, (targetCanvas.width - w) * 0.5, (targetCanvas.height - h) * 0.5, w, h);
     bitmap.close();
     targetImage = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
-    targetButton.textContent = 'TARGET LOADED';
-    meshPipe.textContent = 'TARGET READY';
+    targetLandmarks = [];
+    targetMeshPoints = [];
+    targetMeshTopology = [];
+    targetBounds = null;
+    targetButton.textContent = 'TARGET / ANALYZING';
+    meshPipe.textContent = 'ANALYZING TARGET';
+    await detectTargetFace();
+    if (targetLandmarks.length >= 10) {
+      targetButton.textContent = 'TARGET FACE READY';
+      meshPipe.textContent = 'TARGET FACE READY';
+    } else {
+      targetButton.textContent = 'TARGET FACE NOT FOUND';
+      meshPipe.textContent = 'LOAD CLEAR FACE';
+    }
   } catch {
     targetImage = null;
+    targetLandmarks = [];
+    targetMeshPoints = [];
+    targetMeshTopology = [];
+    targetBounds = null;
     targetButton.textContent = 'TARGET ERROR';
   }
 };
@@ -105,6 +125,7 @@ async function initFaceEngine() {
   await human.warmup();
   humanReady = true;
   engineStatus.textContent = 'FACE ENGINE WEBGL';
+  if (targetImage && !targetLandmarks.length) await detectTargetFace();
   enginePipe.textContent = 'FACE DETECTOR';
 }
 
@@ -269,7 +290,7 @@ function destinationPoint(p, bounds, points, expressions) {
 
   return [p[0] + dx, p[1] + dy];
 }
-function warpTriangle(src, dst) {
+function warpTriangleImage(image, src, dst) {
   const [x0,y0] = src[0], [x1,y1] = src[1], [x2,y2] = src[2];
   const [u0,v0] = dst[0], [u1,v1] = dst[1], [u2,v2] = dst[2];
   const den = x0*(y1-y2) + x1*(y2-y0) + x2*(y0-y1);
@@ -287,52 +308,83 @@ function warpTriangle(src, dst) {
   compositorCtx.closePath();
   compositorCtx.clip();
   compositorCtx.setTransform(a,b,c,d,e,f);
-  compositorCtx.drawImage(sourceFrame, 0, 0);
+  compositorCtx.drawImage(image, 0, 0);
   compositorCtx.restore();
+}
+
+async function detectTargetFace() {
+  if (!humanReady || targetDetectBusy || !targetCanvas.width) return;
+  targetDetectBusy = true;
+  try {
+    const result = await human.detect(targetCanvas);
+    const faces = Array.isArray(result?.face) ? result.face : [];
+    targetLandmarks = faces[0] ? extractLandmarks(faces[0]) : [];
+    targetBounds = faceBounds(targetLandmarks);
+    if (targetLandmarks.length >= 10 && targetBounds) {
+      const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+      targetMeshPoints = [];
+      for (let n = 0; n < targetLandmarks.length; n += step) targetMeshPoints.push(targetLandmarks[n]);
+      targetMeshTopology = buildDelaunay(targetMeshPoints);
+    }
+  } catch (err) {
+    targetLandmarks = [];
+    targetMeshPoints = [];
+    targetMeshTopology = [];
+    targetBounds = null;
+  } finally {
+    targetDetectBusy = false;
+  }
 }
 
 function warpFace(points) {
   const b = faceBounds(points);
   if (!b || b.w < 30 || b.h < 30) return false;
 
-  // Build a sparse Delaunay mesh once per landmark layout. Reusing topology
-  // avoids rebuilding triangles on every frame.
-  const step = points.length > 220 ? 4 : (points.length > 100 ? 2 : 1);
-  const meshPoints = [];
-  for (let n = 0; n < points.length; n += step) meshPoints.push(points[n]);
-  if (meshPoints.length < 12) return false;
-
-  const key = meshPoints.length + ':' + Math.round(b.w) + ':' + Math.round(b.h);
-  if (!meshTopology || meshTopologyKey !== key) {
-    meshTopology = buildDelaunay(meshPoints);
-    meshTopologyKey = key;
-  }
-
+  // The real swap path uses corresponding facial landmarks:
+  // target-image triangles are warped into the live face pose.
+  // This keeps eyes, mouth and jaw aligned to the tracked expression.
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
-  const expressions = estimateExpressions(points, b);
+  if (targetImage && targetLandmarks.length >= 10 && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
+    const liveBounds = b;
+    const liveStep = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+    const liveMeshPoints = [];
+    for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
+    if (liveMeshPoints.length !== targetMeshPoints.length) return false;
 
-  // Keep the live camera as the base. When a target image is loaded, use the
-  // tracked face envelope to blend a target identity region into the same pose.
-  // This is an opt-in local preview path; no image leaves the browser.
-  if (targetImage) {
-    const faceX = b.minX - b.w * 0.08;
-    const faceY = b.minY - b.h * 0.08;
-    const faceW = b.w * 1.16;
-    const faceH = b.h * 1.16;
     compositorCtx.save();
-    compositorCtx.globalAlpha = 0.86;
+    compositorCtx.globalAlpha = 0.98;
     compositorCtx.beginPath();
-    compositorCtx.ellipse((b.minX+b.maxX)/2, (b.minY+b.maxY)/2, faceW*0.5, faceH*0.5, 0, 0, Math.PI*2);
+    const cx = (liveBounds.minX + liveBounds.maxX) * 0.5;
+    const cy = (liveBounds.minY + liveBounds.maxY) * 0.5;
+    compositorCtx.ellipse(cx, cy, liveBounds.w * 0.57, liveBounds.h * 0.62, 0, 0, Math.PI * 2);
     compositorCtx.clip();
-    compositorCtx.drawImage(targetCanvas, faceX, faceY, faceW, faceH);
+
+    for (const tri of targetMeshTopology) {
+      const src = tri.map(i => targetMeshPoints[i]);
+      const dst = tri.map(i => liveMeshPoints[i]);
+      warpTriangleImage(targetCanvas, src, dst);
+    }
+    compositorCtx.restore();
+
+    // Softly reintroduce the live edge to reduce the hard cut around cheeks/jaw.
+    compositorCtx.save();
+    compositorCtx.globalCompositeOperation = 'destination-in';
+    const gradient = compositorCtx.createRadialGradient(cx, cy, Math.min(liveBounds.w, liveBounds.h) * 0.30,
+      cx, cy, Math.max(liveBounds.w, liveBounds.h) * 0.66);
+    gradient.addColorStop(0, 'rgba(255,255,255,1)');
+    gradient.addColorStop(0.78, 'rgba(255,255,255,0.96)');
+    gradient.addColorStop(1, 'rgba(255,255,255,0)');
+    compositorCtx.fillStyle = gradient;
+    compositorCtx.fillRect(liveBounds.minX - liveBounds.w * 0.15, liveBounds.minY - liveBounds.h * 0.15,
+      liveBounds.w * 1.30, liveBounds.h * 1.30);
     compositorCtx.restore();
   } else {
     for (const tri of meshTopology) {
       const src = tri.map(i => meshPoints[i]);
       const dst = src.map(p => destinationPoint(p, b, points, expressions));
-      warpTriangle(src, dst);
+      warpTriangleImage(sourceFrame, src, dst);
     }
   }
 
@@ -367,7 +419,7 @@ function drawCompositor() {
   const face = latestFaces[0];
   const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
   if (points.length >= 10 && warpFace(points)) {
-    meshPipe.textContent = targetImage ? 'TARGET / EXPRESSION LOCK' : compositorMode + ' / WARP READY';
+    meshPipe.textContent = targetImage && targetLandmarks.length ? 'FACE SWAP / LANDMARK WARP' : compositorMode + ' / WARP READY';
     remoteCtx.drawImage(compositor, 0, 0);
   } else {
     smoothedLandmarks = [];
