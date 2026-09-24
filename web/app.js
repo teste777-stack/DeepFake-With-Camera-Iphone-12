@@ -106,7 +106,7 @@ const humanConfig = {
   cacheModels: true,
   face: {
     enabled: true,
-    detector: { enabled: true, rotation: true, return: true, maxDetected: 1, minConfidence: 0.5 },
+    detector: { enabled: true, rotation: false, return: true, maxDetected: 1, minConfidence: 0.30 },
     mesh: { enabled: true },
     iris: { enabled: false },
     emotion: { enabled: false },
@@ -538,8 +538,10 @@ async function pollEngine() {
   try {
     const r = await fetch('/api/engine', { cache: 'no-store' });
     const e = await r.json();
-    engineStatus.textContent = e.engine || 'STANDBY';
-    enginePipe.textContent = e.engine || 'BUFFER';
+    if (!humanReady || (!latestFaces.length && e.engine === 'FACE-SCAN')) {
+      engineStatus.textContent = e.engine || 'STANDBY';
+      enginePipe.textContent = e.engine || 'BUFFER';
+    }
     processMs.textContent = e.processingMs != null ? e.processingMs + ' ms' : '—';
   } catch {}
 }
