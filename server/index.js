@@ -106,6 +106,44 @@ if (!fs.existsSync(key) || !fs.existsSync(cert)) {
   process.exit(1);
 }
 
+
+/*
+ * Bootstrap HTTP server:
+ * The HTTPS CA cannot be downloaded from https://x.local:7777/ca.crt
+ * until the iPhone already trusts the CA. Serve the CA over plain HTTP
+ * on a separate local bootstrap port so the iPhone can install it first.
+ */
+const BOOTSTRAP_PORT = Number(process.env.BOOTSTRAP_PORT || 7778);
+const bootstrap = express();
+
+bootstrap.get('/', (_req, res) => {
+  const caUrl = 'http://' + reqHost(_req) + ':' + BOOTSTRAP_PORT + '/ca.crt';
+  res.type('html').send(`<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>x.local Camera — Install Certificate</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:28px;line-height:1.5">
+<h1>x.local Camera</h1>
+<p>Install the local CA certificate on this iPhone before opening the secure camera page.</p>
+<p><a href="${caUrl}" download="x-local-ca.cer">Download x-local-ca.cer</a></p>
+<p>After downloading: Settings → Profile Downloaded → Install. Then Settings → General → About → Certificate Trust Settings → enable full trust for the x.local Camera Local CA.</p>
+<p>Secure camera: <a href="https://x.local:7777">https://x.local:7777</a></p>
+</body></html>`);
+});
+
+bootstrap.get(['/ca.crt', '/ca.cer'], (_req, res) => {
+  const ca = path.join(CERT_DIR, 'x-local-ca.pem');
+  if (!fs.existsSync(ca)) return res.status(404).type('text/plain').send('CA ausente. Rode npm run cert:generate');
+  res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+  res.setHeader('Content-Disposition', 'attachment; filename="x-local-ca.cer"');
+  res.sendFile(ca);
+});
+
+const bootstrapServer = require('http').createServer(bootstrap);
+
+function reqHost(req) {
+  return req.headers.host ? req.headers.host.split(':')[0] : primaryLanIp();
+}
+
 const server = https.createServer({
   key: fs.readFileSync(key),
   cert: fs.readFileSync(cert)
@@ -205,8 +243,13 @@ server.listen(PORT, HOST, () => {
   for (const ip of lanIPv4()) console.log('  https://' + ip + ':' + PORT);
   console.log('mDNS: https://x.local:' + PORT);
   console.log('WebSocket: wss://x.local:' + PORT + '/ws');
-  console.log('CA: https://x.local:' + PORT + '/ca.crt');
+  console.log('CA (bootstrap HTTP): http://x.local:' + BOOTSTRAP_PORT + '/ca.crt');
+  console.log('Bootstrap page: http://x.local:' + BOOTSTRAP_PORT);
   console.log('');
+});
+
+bootstrapServer.listen(BOOTSTRAP_PORT, HOST, () => {
+  console.log('CA bootstrap HTTP ativo em http://0.0.0.0:' + BOOTSTRAP_PORT);
 });
 
 setInterval(() => {
