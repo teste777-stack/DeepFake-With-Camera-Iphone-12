@@ -40,6 +40,7 @@ let syntheticIdentity = null;
 let identityReady = false;
 let faceTrackingReady = false;
 let lastCompositorFrame = 0;
+let syntheticMeshKey = '';
 const remoteFps = document.getElementById('remoteFps');
 const remoteFrames = document.getElementById('remoteFrames');
 const engineStatus = document.getElementById('engineStatus');
@@ -132,6 +133,7 @@ function generateSyntheticFace(seed) {
   targetImage = targetCtx.getImageData(0,0,c.width,c.height);
   targetLandmarks=[]; targetMeshPoints=[]; targetMeshTopology=[]; targetBounds=null;
   syntheticIdentity = { seed: Number(seed) >>> 0, geometry: identityGeometry };
+  syntheticMeshKey = '';
   identityReady = true;
   targetButton.textContent='SYNTHETIC FACE';
   identityStatus.textContent='SYNTHETIC IDENTITY READY / SEED ' + syntheticIdentity.seed;
@@ -163,6 +165,7 @@ targetInput.onchange = async () => {
     targetImage = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
     syntheticIdentity = null;
     identityReady = false;
+    syntheticMeshKey = '';
     targetLandmarks = [];
     targetMeshPoints = [];
     targetMeshTopology = [];
@@ -176,6 +179,7 @@ targetInput.onchange = async () => {
       meshPipe.textContent = 'TARGET FACE READY';
     } else {
       targetButton.textContent = 'TARGET FACE NOT FOUND';
+      targetImage = null;
       meshPipe.textContent = 'LOAD CLEAR FACE';
     }
   } catch {
@@ -186,6 +190,8 @@ targetInput.onchange = async () => {
     targetBounds = null;
     syntheticIdentity = null;
     identityReady = false;
+    syntheticMeshKey = '';
+    targetImage = null;
     targetButton.textContent = 'TARGET ERROR';
   }
 };
@@ -469,7 +475,11 @@ function buildSyntheticTarget(points) {
   const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
   targetMeshPoints = [];
   for (let n = 0; n < targetLandmarks.length; n += step) targetMeshPoints.push(targetLandmarks[n]);
-  targetMeshTopology = buildDelaunay(targetMeshPoints);
+  const meshKey = syntheticIdentity.seed + ':' + targetMeshPoints.length;
+  if (meshKey !== syntheticMeshKey) {
+    targetMeshTopology = buildDelaunay(targetMeshPoints);
+    syntheticMeshKey = meshKey;
+  }
   return targetMeshPoints.length >= 12 && targetMeshTopology.length > 0;
 }
 
