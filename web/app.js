@@ -489,11 +489,14 @@ function warpFace(points) {
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
-  if (syntheticIdentity) buildSyntheticTarget(points);
+  if (syntheticIdentity && (!targetMeshPoints.length || !targetMeshTopology.length)) {
+    if (!buildSyntheticTarget(points)) return false;
+  }
 
   if (syntheticIdentity && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
     const liveBounds = b;
     const liveStep = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+    if (!targetMeshPoints.length || !targetMeshTopology.length) return false;
     const liveMeshPoints = [];
     for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
     if (liveMeshPoints.length !== targetMeshPoints.length) return false;
