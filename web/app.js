@@ -15,7 +15,11 @@ const sourceFrameCtx = sourceFrame.getContext('2d', { alpha: false });
 const compositor = document.createElement('canvas');
 compositor.width = remote.width;
 compositor.height = remote.height;
-const compositorCtx = compositor.getContext('2d', { alpha: false });
+const compositorCtx = compositor.getContext('2d', { alpha: true });
+const swapLayer = document.createElement('canvas');
+swapLayer.width = remote.width;
+swapLayer.height = remote.height;
+const swapCtx = swapLayer.getContext('2d', { alpha: true });
 let latestFaces = [];
 let smoothedLandmarks = [];
 let targetFace = null;
@@ -290,7 +294,7 @@ function destinationPoint(p, bounds, points, expressions) {
 
   return [p[0] + dx, p[1] + dy];
 }
-function warpTriangleImage(image, src, dst) {
+function warpTriangleImage(ctx, image, src, dst) {
   const [x0,y0] = src[0], [x1,y1] = src[1], [x2,y2] = src[2];
   const [u0,v0] = dst[0], [u1,v1] = dst[1], [u2,v2] = dst[2];
   const den = x0*(y1-y2) + x1*(y2-y0) + x2*(y0-y1);
@@ -302,14 +306,14 @@ function warpTriangleImage(image, src, dst) {
   const d = (v0*(x2-x1)+v1*(x0-x2)+v2*(x1-x0))/den;
   const f = v0 - b*x0 - d*y0;
 
-  compositorCtx.save();
-  compositorCtx.beginPath();
-  compositorCtx.moveTo(u0,v0); compositorCtx.lineTo(u1,v1); compositorCtx.lineTo(u2,v2);
-  compositorCtx.closePath();
-  compositorCtx.clip();
-  compositorCtx.setTransform(a,b,c,d,e,f);
-  compositorCtx.drawImage(image, 0, 0);
-  compositorCtx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(u0,v0); ctx.lineTo(u1,v1); ctx.lineTo(u2,v2);
+  ctx.closePath();
+  ctx.clip();
+  ctx.setTransform(a,b,c,d,e,f);
+  ctx.drawImage(image, 0, 0);
+  ctx.restore();
 }
 
 async function detectTargetFace() {
@@ -353,32 +357,42 @@ function warpFace(points) {
     for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
     if (liveMeshPoints.length !== targetMeshPoints.length) return false;
 
-    compositorCtx.save();
-    compositorCtx.globalAlpha = 0.98;
-    compositorCtx.beginPath();
+    // Render the swapped face on a transparent layer, never on the live base.
+    // This prevents the edge mask from erasing the rest of the camera frame.
+    swapCtx.setTransform(1, 0, 0, 1, 0, 0);
+    swapCtx.clearRect(0, 0, swapLayer.width, swapLayer.height);
     const cx = (liveBounds.minX + liveBounds.maxX) * 0.5;
     const cy = (liveBounds.minY + liveBounds.maxY) * 0.5;
-    compositorCtx.ellipse(cx, cy, liveBounds.w * 0.57, liveBounds.h * 0.62, 0, 0, Math.PI * 2);
-    compositorCtx.clip();
+    const edge = Math.max(liveBounds.w, liveBounds.h);
 
+    swapCtx.save();
+    swapCtx.beginPath();
+    swapCtx.ellipse(cx, cy, liveBounds.w * 0.58, liveBounds.h * 0.64, 0, 0, Math.PI * 2);
+    swapCtx.clip();
     for (const tri of targetMeshTopology) {
       const src = tri.map(i => targetMeshPoints[i]);
       const dst = tri.map(i => liveMeshPoints[i]);
-      warpTriangleImage(targetCanvas, src, dst);
+      warpTriangleImage(swapCtx, targetCanvas, src, dst);
     }
-    compositorCtx.restore();
+    swapCtx.restore();
 
-    // Softly reintroduce the live edge to reduce the hard cut around cheeks/jaw.
-    compositorCtx.save();
-    compositorCtx.globalCompositeOperation = 'destination-in';
-    const gradient = compositorCtx.createRadialGradient(cx, cy, Math.min(liveBounds.w, liveBounds.h) * 0.30,
-      cx, cy, Math.max(liveBounds.w, liveBounds.h) * 0.66);
+    // Feather the alpha around the face boundary.
+    const mask = document.createElement('canvas');
+    mask.width = swapLayer.width;
+    mask.height = swapLayer.height;
+    const maskCtx = mask.getContext('2d');
+    const gradient = maskCtx.createRadialGradient(cx, cy, edge * 0.28, cx, cy, edge * 0.62);
     gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(0.78, 'rgba(255,255,255,0.96)');
+    gradient.addColorStop(0.82, 'rgba(255,255,255,0.96)');
     gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    compositorCtx.fillStyle = gradient;
-    compositorCtx.fillRect(liveBounds.minX - liveBounds.w * 0.15, liveBounds.minY - liveBounds.h * 0.15,
-      liveBounds.w * 1.30, liveBounds.h * 1.30);
+    maskCtx.fillStyle = gradient;
+    maskCtx.fillRect(0, 0, mask.width, mask.height);
+    swapCtx.globalCompositeOperation = 'destination-in';
+    swapCtx.drawImage(mask, 0, 0);
+
+    compositorCtx.save();
+    compositorCtx.globalAlpha = 0.98;
+    compositorCtx.drawImage(swapLayer, 0, 0);
     compositorCtx.restore();
   } else {
     for (const tri of meshTopology) {
