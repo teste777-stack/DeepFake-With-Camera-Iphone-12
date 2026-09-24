@@ -32,6 +32,9 @@ let targetImage = null;
 let targetCanvas = document.createElement('canvas');
 let targetCtx = targetCanvas.getContext('2d', { alpha: false });
 let compositorMode = 'TARGET READY';
+let syntheticIdentity = null;
+let identityReady = false;
+let faceTrackingReady = false;
 let lastCompositorFrame = 0;
 const remoteFps = document.getElementById('remoteFps');
 const remoteFrames = document.getElementById('remoteFrames');
@@ -80,6 +83,7 @@ function generateSyntheticFace(seed) {
   const cx = c.width*.5 + (rand()-.5)*18, cy = c.height*.52;
   const eyeY = cy - faceH*.12, eyeGap = faceW*.20;
   const noseLen = faceH*(.18 + rand()*.05);
+  const identityGeometry = { cx, cy, faceW, faceH };
   const mouthW = faceW*(.25 + rand()*.10);
 
   const bg = ctx.createLinearGradient(0,0,0,c.height);
@@ -129,10 +133,13 @@ function generateSyntheticFace(seed) {
   ctx.restore();
   targetImage = targetCtx.getImageData(0,0,c.width,c.height);
   targetLandmarks=[]; targetMeshPoints=[]; targetMeshTopology=[]; targetBounds=null;
+  syntheticIdentity = { seed: Number(seed) >>> 0, geometry: identityGeometry };
+  identityReady = true;
   targetButton.textContent='SYNTHETIC FACE';
-  identityStatus.textContent='GENERATED / SEED ' + (Number(seed) >>> 0);
-  meshPipe.textContent='ANALYZING SYNTHETIC FACE';
-  detectTargetFace();
+  identityStatus.textContent='SYNTHETIC IDENTITY READY / SEED ' + syntheticIdentity.seed;
+  meshPipe.textContent='WAITING FOR LIVE FACE';
+  engineStatus.textContent = 'SYNTHETIC IDENTITY READY';
+  enginePipe.textContent = 'IDENTITY';
 }
 
 generateFaceButton?.addEventListener('click', () => generateSyntheticFace(seedInput.value));
@@ -156,6 +163,8 @@ targetInput.onchange = async () => {
     targetCtx.drawImage(bitmap, (targetCanvas.width - w) * 0.5, (targetCanvas.height - h) * 0.5, w, h);
     bitmap.close();
     targetImage = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
+    syntheticIdentity = null;
+    identityReady = false;
     targetLandmarks = [];
     targetMeshPoints = [];
     targetMeshTopology = [];
@@ -177,6 +186,8 @@ targetInput.onchange = async () => {
     targetMeshPoints = [];
     targetMeshTopology = [];
     targetBounds = null;
+    syntheticIdentity = null;
+    identityReady = false;
     targetButton.textContent = 'TARGET ERROR';
   }
 };
@@ -218,7 +229,7 @@ async function initFaceEngine() {
   await human.warmup();
   humanReady = true;
   engineStatus.textContent = 'FACE ENGINE WEBGL';
-  if (targetImage && !targetLandmarks.length) await detectTargetFace();
+  if (targetImage && !targetLandmarks.length && !syntheticIdentity) await detectTargetFace();
   enginePipe.textContent = 'FACE DETECTOR';
 }
 
@@ -429,6 +440,29 @@ async function detectTargetFace() {
   }
 }
 
+function buildSyntheticTarget(points) {
+  if (!syntheticIdentity || !points.length) return false;
+  const liveBounds = faceBounds(points);
+  if (!liveBounds || liveBounds.w < 30 || liveBounds.h < 30) return false;
+  const g = syntheticIdentity.geometry;
+  const sx = Math.max(80, g.faceW);
+  const sy = Math.max(110, g.faceH);
+  targetLandmarks = points.map(([x, y]) => {
+    const nx = (x - liveBounds.minX) / Math.max(1, liveBounds.w);
+    const ny = (y - liveBounds.minY) / Math.max(1, liveBounds.h);
+    return [
+      g.cx - sx * 0.5 + nx * sx,
+      g.cy - sy * 0.5 + ny * sy
+    ];
+  });
+  targetBounds = faceBounds(targetLandmarks);
+  const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+  targetMeshPoints = [];
+  for (let n = 0; n < targetLandmarks.length; n += step) targetMeshPoints.push(targetLandmarks[n]);
+  targetMeshTopology = buildDelaunay(targetMeshPoints);
+  return targetMeshPoints.length >= 12 && targetMeshTopology.length > 0;
+}
+
 function warpFace(points) {
   const b = faceBounds(points);
   if (!b || b.w < 30 || b.h < 30) return false;
@@ -438,6 +472,8 @@ function warpFace(points) {
   // This keeps eyes, mouth and jaw aligned to the tracked expression.
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
+
+  if (syntheticIdentity) buildSyntheticTarget(points);
 
   if (targetImage && targetLandmarks.length >= 10 && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
     const liveBounds = b;
@@ -478,6 +514,7 @@ function warpFace(points) {
     maskCtx.fillRect(0, 0, mask.width, mask.height);
     swapCtx.globalCompositeOperation = 'destination-in';
     swapCtx.drawImage(mask, 0, 0);
+    swapCtx.globalCompositeOperation = 'source-over';
 
     compositorCtx.save();
     compositorCtx.globalAlpha = 0.98;
@@ -522,12 +559,18 @@ function drawCompositor() {
   const face = latestFaces[0];
   const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
   if (points.length >= 10 && warpFace(points)) {
-    meshPipe.textContent = targetImage && targetLandmarks.length ? 'FACE SWAP / LANDMARK WARP' : compositorMode + ' / WARP READY';
+    if (syntheticIdentity) {
+      meshPipe.textContent = 'FACE SWAP ACTIVE / SYNTHETIC IDENTITY';
+      engineStatus.textContent = 'FACE SWAP ACTIVE';
+      enginePipe.textContent = 'TRACK + COMPOSITE';
+    } else {
+      meshPipe.textContent = targetImage && targetLandmarks.length ? 'FACE SWAP / LANDMARK WARP' : compositorMode + ' / WARP READY';
+    }
     remoteCtx.drawImage(compositor, 0, 0);
   } else {
     smoothedLandmarks = [];
     remoteCtx.drawImage(sourceFrame, 0, 0);
-    meshPipe.textContent = 'SEARCHING';
+    meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
   }
 }
 async function detectFaceFrame() {
@@ -545,9 +588,10 @@ async function detectFaceFrame() {
     const ms = Number((performance.now() - t0).toFixed(2));
     faceCountEl.textContent = String(count);
     faceDetectMsEl.textContent = ms + ' ms';
-    meshPipe.textContent = count ? 'LANDMARKS LIVE' : 'SEARCHING';
-    engineStatus.textContent = count ? 'FACE-LANDMARKS' : 'FACE-SCAN';
-    enginePipe.textContent = count ? 'LANDMARKS' : 'FACE DETECTOR';
+    faceTrackingReady = count > 0;
+    meshPipe.textContent = count ? (identityReady ? 'LANDMARKS LIVE / IDENTITY READY' : 'LANDMARKS LIVE') : (identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING');
+    engineStatus.textContent = count ? (identityReady ? 'FACE DETECTED / READY' : 'FACE DETECTED') : (identityReady ? 'IDENTITY READY / WAITING FACE' : 'FACE-SCAN');
+    enginePipe.textContent = count ? (identityReady ? 'TRACK + COMPOSITE' : 'LANDMARKS') : 'FACE DETECTOR';
     ws?.send(JSON.stringify({ type: 'faceResult', data: {
       faceCount: count,
       detectionMs: ms,
@@ -586,8 +630,10 @@ function connect() {
 
   ws.onopen = () => {
     setStatus('WSS ONLINE', true);
-    engineStatus.textContent = 'FRAME BUFFER';
-    enginePipe.textContent = 'BUFFER';
+    if (!humanReady) {
+      if (!humanReady) engineStatus.textContent = 'FRAME BUFFER';
+      enginePipe.textContent = 'BUFFER';
+    }
   };
 
   ws.onclose = () => {
@@ -618,7 +664,7 @@ function connect() {
     }
 
     if (msg.type === 'camera-status') {
-      engineStatus.textContent = msg.active ? 'CAMERA LIVE' : 'STANDBY';
+      if (!humanReady) engineStatus.textContent = msg.active ? 'CAMERA LIVE' : 'STANDBY';
     }
   };
 }
@@ -627,7 +673,7 @@ async function pollEngine() {
   try {
     const r = await fetch('/api/engine', { cache: 'no-store' });
     const e = await r.json();
-    if (!humanReady || (!latestFaces.length && e.engine === 'FACE-SCAN')) {
+    if (!humanReady) {
       engineStatus.textContent = e.engine || 'STANDBY';
       enginePipe.textContent = e.engine || 'BUFFER';
     }
