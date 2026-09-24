@@ -491,7 +491,7 @@ function warpFace(points) {
 
   if (syntheticIdentity) buildSyntheticTarget(points);
 
-  if (targetImage && targetLandmarks.length >= 10 && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
+  if (syntheticIdentity && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
     const liveBounds = b;
     const liveStep = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
     const liveMeshPoints = [];
