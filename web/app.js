@@ -428,7 +428,7 @@ async function detectTargetFace() {
     targetLandmarks = faces[0] ? extractLandmarks(faces[0]) : [];
     targetBounds = faceBounds(targetLandmarks);
     if (targetLandmarks.length >= 10 && targetBounds) {
-      const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+      const step = getMeshStep(targetLandmarks.length);
       targetMeshPoints = [];
       for (let n = 0; n < targetLandmarks.length; n += step) targetMeshPoints.push(targetLandmarks[n]);
       targetMeshTopology = buildDelaunay(targetMeshPoints);
@@ -453,6 +453,15 @@ function updateSwapMask(cx, cy, edge) {
   gradient.addColorStop(1, 'rgba(255,255,255,0)');
   swapMaskCtx.fillStyle = gradient;
   swapMaskCtx.fillRect(0, 0, swapMask.width, swapMask.height);
+}
+
+function getMeshStep(count) {
+  // Keep enough facial detail while preventing hundreds of full-canvas
+  // affine draw calls on every compositor frame.
+  if (count > 360) return 6;
+  if (count > 220) return 4;
+  if (count > 120) return 3;
+  return 2;
 }
 
 function buildSyntheticTarget(points) {
@@ -511,7 +520,7 @@ function warpFace(points) {
 
   if (syntheticIdentity && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
     const liveBounds = b;
-    const liveStep = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+    const liveStep = getMeshStep(points.length);
     if (!targetMeshPoints.length || !targetMeshTopology.length) return false;
     const liveMeshPoints = [];
     for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
