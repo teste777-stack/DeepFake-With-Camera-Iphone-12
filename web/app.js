@@ -175,12 +175,15 @@ targetInput.onchange = async () => {
     meshPipe.textContent = 'ANALYZING TARGET';
     await detectTargetFace();
     if (targetLandmarks.length >= 10) {
-      targetButton.textContent = targetImage ? 'TARGET FACE READY' : 'TARGET FACE READY';
-      identityStatus.textContent = identityStatus.textContent.includes('GENERATED') ? identityStatus.textContent + ' / TRACKABLE' : 'TARGET FACE READY';
+      identityReady = true;
+      faceTrackingReady = false;
+      targetButton.textContent = 'TARGET FACE READY';
+      identityStatus.textContent = 'TARGET FACE READY / TRACKABLE';
       meshPipe.textContent = 'TARGET FACE READY';
     } else {
       targetButton.textContent = 'TARGET FACE NOT FOUND';
       targetImage = null;
+      identityReady = false;
       meshPipe.textContent = 'LOAD CLEAR FACE';
     }
   } catch {
@@ -193,6 +196,7 @@ targetInput.onchange = async () => {
     identityReady = false;
     syntheticMeshKey = '';
     targetImage = null;
+    identityReady = false;
     targetButton.textContent = 'TARGET ERROR';
   }
 };
@@ -490,7 +494,7 @@ function buildSyntheticTarget(points) {
     targetLandmarks = syntheticCanonicalLandmarks.map(p => p.slice());
     targetBounds = faceBounds(targetLandmarks);
 
-    const step = targetLandmarks.length > 220 ? 4 : (targetLandmarks.length > 100 ? 2 : 1);
+    const step = getMeshStep(targetLandmarks.length);
     targetMeshPoints = [];
     for (let n = 0; n < targetLandmarks.length; n += step) {
       targetMeshPoints.push(targetLandmarks[n]);
@@ -508,58 +512,58 @@ function warpFace(points) {
   const b = faceBounds(points);
   if (!b || b.w < 30 || b.h < 30) return false;
 
-  // The real swap path uses corresponding facial landmarks:
-  // target-image triangles are warped into the live face pose.
-  // This keeps eyes, mouth and jaw aligned to the tracked expression.
-  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
-  compositorCtx.drawImage(sourceFrame, 0, 0);
+  const hasSynthetic = !!syntheticIdentity;
+  const hasManualTarget = !hasSynthetic &&
+    !!targetImage &&
+    targetMeshPoints.length >= 12 &&
+    targetMeshTopology.length > 0;
 
-  if (syntheticIdentity && (!targetMeshPoints.length || !targetMeshTopology.length)) {
+  if (hasSynthetic && (!targetMeshPoints.length || !targetMeshTopology.length)) {
     if (!buildSyntheticTarget(points)) return false;
   }
 
-  if (syntheticIdentity && targetMeshPoints.length >= 12 && targetMeshTopology.length) {
-    const liveBounds = b;
-    const liveStep = getMeshStep(points.length);
-    if (!targetMeshPoints.length || !targetMeshTopology.length) return false;
-    const liveMeshPoints = [];
-    for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
-    if (liveMeshPoints.length !== targetMeshPoints.length) return false;
+  if (!hasSynthetic && !hasManualTarget) return false;
+  if (targetMeshPoints.length < 12 || !targetMeshTopology.length) return false;
 
-    // Render the swapped face on a transparent layer, never on the live base.
-    // This prevents the edge mask from erasing the rest of the camera frame.
-    swapCtx.setTransform(1, 0, 0, 1, 0, 0);
-    swapCtx.clearRect(0, 0, swapLayer.width, swapLayer.height);
-    const cx = (liveBounds.minX + liveBounds.maxX) * 0.5;
-    const cy = (liveBounds.minY + liveBounds.maxY) * 0.5;
-    const edge = Math.max(liveBounds.w, liveBounds.h);
+  const liveStep = getMeshStep(points.length);
+  const liveMeshPoints = [];
+  for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
+  if (liveMeshPoints.length !== targetMeshPoints.length) return false;
 
-    swapCtx.save();
-    swapCtx.beginPath();
-    swapCtx.ellipse(cx, cy, liveBounds.w * 0.58, liveBounds.h * 0.64, 0, 0, Math.PI * 2);
-    swapCtx.clip();
-    for (const tri of targetMeshTopology) {
-      const src = tri.map(i => targetMeshPoints[i]);
-      const dst = tri.map(i => liveMeshPoints[i]);
-      warpTriangleImage(swapCtx, targetCanvas, src, dst);
-    }
-    swapCtx.restore();
+  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+  compositorCtx.drawImage(sourceFrame, 0, 0);
 
-    // Feather the alpha around the face boundary using a reusable mask.
-    updateSwapMask(cx, cy, edge);
-    swapCtx.globalCompositeOperation = 'destination-in';
-    swapCtx.drawImage(swapMask, 0, 0);
-    swapCtx.globalCompositeOperation = 'source-over';
+  // Render only the warped face into a transparent layer.
+  // The live camera remains the immutable background.
+  swapCtx.setTransform(1, 0, 0, 1, 0, 0);
+  swapCtx.clearRect(0, 0, swapLayer.width, swapLayer.height);
 
-    compositorCtx.save();
-    compositorCtx.globalAlpha = 0.98;
-    compositorCtx.drawImage(swapLayer, 0, 0);
-    compositorCtx.restore();
-  } else {
-    // No target identity: keep the camera untouched instead of entering the
-    // legacy mesh path, which depended on undefined meshPoints/expressions state.
-    return false;
+  const cx = (b.minX + b.maxX) * 0.5;
+  const cy = (b.minY + b.maxY) * 0.5;
+  const edge = Math.max(b.w, b.h);
+
+  swapCtx.save();
+  swapCtx.beginPath();
+  swapCtx.ellipse(cx, cy, b.w * 0.58, b.h * 0.64, 0, 0, Math.PI * 2);
+  swapCtx.clip();
+
+  for (const tri of targetMeshTopology) {
+    const src = tri.map(i => targetMeshPoints[i]);
+    const dst = tri.map(i => liveMeshPoints[i]);
+    warpTriangleImage(swapCtx, targetCanvas, src, dst);
   }
+
+  swapCtx.restore();
+
+  updateSwapMask(cx, cy, edge);
+  swapCtx.globalCompositeOperation = 'destination-in';
+  swapCtx.drawImage(swapMask, 0, 0);
+  swapCtx.globalCompositeOperation = 'source-over';
+
+  compositorCtx.save();
+  compositorCtx.globalAlpha = 0.98;
+  compositorCtx.drawImage(swapLayer, 0, 0);
+  compositorCtx.restore();
 
   return true;
 }
@@ -587,7 +591,6 @@ function drawCompositor() {
     }
     remoteCtx.drawImage(compositor, 0, 0);
   } else {
-    smoothedLandmarks = [];
     remoteCtx.drawImage(sourceFrame, 0, 0);
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
   }
