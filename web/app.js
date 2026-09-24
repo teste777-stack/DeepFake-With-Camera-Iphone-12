@@ -22,7 +22,6 @@ swapLayer.height = remote.height;
 const swapCtx = swapLayer.getContext('2d', { alpha: true });
 let latestFaces = [];
 let smoothedLandmarks = [];
-let targetFace = null;
 let targetLandmarks = [];
 let targetMeshPoints = [];
 let targetMeshTopology = [];
@@ -87,7 +86,6 @@ function generateSyntheticFace(seed) {
   const faceW = 150 + rand()*55, faceH = 205 + rand()*45;
   const cx = c.width*.5 + (rand()-.5)*18, cy = c.height*.52;
   const eyeY = cy - faceH*.12, eyeGap = faceW*.20;
-  const noseLen = faceH*(.18 + rand()*.05);
   const identityGeometry = { cx, cy, faceW, faceH };
   const mouthW = faceW*(.25 + rand()*.10);
 
@@ -272,8 +270,6 @@ function faceBounds(points) {
   return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
 }
 
-let meshTopology = null;
-let meshTopologyKey = '';
 
 function circumcircle(a, b, c) {
   const ax = a[0], ay = a[1], bx = b[0], by = b[1], cx = c[0], cy = c[1];
