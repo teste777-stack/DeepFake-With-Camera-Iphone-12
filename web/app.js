@@ -30,7 +30,11 @@ let targetBounds = null;
 let targetDetectBusy = false;
 let targetImage = null;
 let targetCanvas = document.createElement('canvas');
-let targetCtx = targetCanvas.getContext('2d', { alpha: false });
+let targetCtx = targetCanvas.getContext('2d', { alpha: true });
+const swapMask = document.createElement('canvas');
+swapMask.width = remote.width;
+swapMask.height = remote.height;
+const swapMaskCtx = swapMask.getContext('2d', { alpha: true });
 let compositorMode = 'TARGET READY';
 let syntheticIdentity = null;
 let identityReady = false;
@@ -86,14 +90,8 @@ function generateSyntheticFace(seed) {
   const identityGeometry = { cx, cy, faceW, faceH };
   const mouthW = faceW*(.25 + rand()*.10);
 
-  const bg = ctx.createLinearGradient(0,0,0,c.height);
-  bg.addColorStop(0,'#202020'); bg.addColorStop(1,'#050505');
-  ctx.fillStyle=bg; ctx.fillRect(0,0,c.width,c.height);
-
-  const glow=ctx.createRadialGradient(cx,cy-faceH*.12,20,cx,cy,faceW*1.2);
-  glow.addColorStop(0,'rgba(255,220,190,.16)'); glow.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle=glow; ctx.fillRect(0,0,c.width,c.height);
-
+  // Transparent identity layer: only the generated face is composited over the live camera.
+  // The live camera remains the background and is never replaced by the synthetic canvas.
   ctx.save();
   ctx.beginPath();
   ctx.ellipse(cx,cy,faceW*.5,faceH*.5,0,0,Math.PI*2);
@@ -440,6 +438,18 @@ async function detectTargetFace() {
   }
 }
 
+function updateSwapMask(cx, cy, edge) {
+  if (!swapMaskCtx) return;
+  swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
+  swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
+  const gradient = swapMaskCtx.createRadialGradient(cx, cy, edge * 0.28, cx, cy, edge * 0.62);
+  gradient.addColorStop(0, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.82, 'rgba(255,255,255,0.96)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  swapMaskCtx.fillStyle = gradient;
+  swapMaskCtx.fillRect(0, 0, swapMask.width, swapMask.height);
+}
+
 function buildSyntheticTarget(points) {
   if (!syntheticIdentity || !points.length) return false;
   const liveBounds = faceBounds(points);
@@ -501,19 +511,10 @@ function warpFace(points) {
     }
     swapCtx.restore();
 
-    // Feather the alpha around the face boundary.
-    const mask = document.createElement('canvas');
-    mask.width = swapLayer.width;
-    mask.height = swapLayer.height;
-    const maskCtx = mask.getContext('2d');
-    const gradient = maskCtx.createRadialGradient(cx, cy, edge * 0.28, cx, cy, edge * 0.62);
-    gradient.addColorStop(0, 'rgba(255,255,255,1)');
-    gradient.addColorStop(0.82, 'rgba(255,255,255,0.96)');
-    gradient.addColorStop(1, 'rgba(255,255,255,0)');
-    maskCtx.fillStyle = gradient;
-    maskCtx.fillRect(0, 0, mask.width, mask.height);
+    // Feather the alpha around the face boundary using a reusable mask.
+    updateSwapMask(cx, cy, edge);
     swapCtx.globalCompositeOperation = 'destination-in';
-    swapCtx.drawImage(mask, 0, 0);
+    swapCtx.drawImage(swapMask, 0, 0);
     swapCtx.globalCompositeOperation = 'source-over';
 
     compositorCtx.save();
@@ -521,27 +522,11 @@ function warpFace(points) {
     compositorCtx.drawImage(swapLayer, 0, 0);
     compositorCtx.restore();
   } else {
-    for (const tri of meshTopology) {
-      const src = tri.map(i => meshPoints[i]);
-      const dst = src.map(p => destinationPoint(p, b, points, expressions));
-      warpTriangleImage(sourceFrame, src, dst);
-    }
+    // No target identity: keep the camera untouched instead of entering the
+    // legacy mesh path, which depended on undefined meshPoints/expressions state.
+    return false;
   }
 
-  compositorCtx.save();
-  compositorCtx.globalAlpha = 0.08;
-  compositorCtx.strokeStyle = '#ffffff';
-  compositorCtx.lineWidth = 1;
-  for (const tri of meshTopology) {
-    const p0 = destinationPoint(meshPoints[tri[0]], b, points, expressions);
-    const p1 = destinationPoint(meshPoints[tri[1]], b, points, expressions);
-    const p2 = destinationPoint(meshPoints[tri[2]], b, points, expressions);
-    compositorCtx.beginPath();
-    compositorCtx.moveTo(p0[0],p0[1]); compositorCtx.lineTo(p1[0],p1[1]); compositorCtx.lineTo(p2[0],p2[1]);
-    compositorCtx.closePath();
-    compositorCtx.stroke();
-  }
-  compositorCtx.restore();
   return true;
 }
 function drawCompositor() {
@@ -659,7 +644,7 @@ function connect() {
       remoteBusy = false;
     }
 
-    if (msg.type === 'hello' && msg.hasFrame) {
+    if (msg.type === 'hello' && msg.hasFrame && !humanReady) {
       engineStatus.textContent = 'FRAME BUFFER';
     }
 
