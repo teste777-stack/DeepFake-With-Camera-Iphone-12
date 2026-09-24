@@ -269,7 +269,6 @@ async function processFrame(frame) {
     // Primeiro estágio real: decodifica e normaliza o frame localmente.
     // O detector/landmarks GPU entra aqui sem alterar o transporte do iPhone.
     const meta = await sharp(frame).metadata();
-    if (!state.faceCount) state.faceEngine = 'FRAME-DECODE';
     state.processedFrames++;
     state.processingMs = Number((performance.now() - t0).toFixed(2));
     state.frameWidth = meta.width || 0;
