@@ -251,10 +251,38 @@ function extractLandmarks(face) {
     .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
 }
 
+function landmarkJumpTooLarge(points) {
+  if (!smoothedLandmarks.length || smoothedLandmarks.length !== points.length) return false;
+
+  let sum = 0;
+  let count = 0;
+  for (let n = 0; n < points.length; n++) {
+    const dx = points[n][0] - smoothedLandmarks[n][0];
+    const dy = points[n][1] - smoothedLandmarks[n][1];
+    sum += Math.hypot(dx, dy);
+    count++;
+  }
+
+  if (!count) return false;
+  const bounds = faceBounds(points);
+  const reference = Math.max(30, bounds?.w || 30, bounds?.h || 30);
+  const meanJump = sum / count;
+
+  // A whole-face movement can legitimately be large, so use a relative
+  // threshold. Sudden multi-face-width mesh jumps are treated as a bad sample.
+  return meanJump > reference * 0.34;
+}
+
 function smoothLandmarks(points) {
   if (!points.length) {
     return smoothedLandmarks;
   }
+
+  if (landmarkJumpTooLarge(points)) {
+    lastValidFaceAt = performance.now();
+    return smoothedLandmarks;
+  }
+
   const alpha = 0.34;
   if (smoothedLandmarks.length !== points.length) {
     smoothedLandmarks = points.map(p => p.slice());
@@ -747,6 +775,11 @@ async function startCamera() {
 
   try {
     if (stream) stopCamera(false);
+    pendingRemoteFrame = null;
+    latestFaces = [];
+    smoothedLandmarks = [];
+    lastValidFaceAt = 0;
+    await new Promise(resolve => requestAnimationFrame(resolve));
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: facing },
