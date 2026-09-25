@@ -861,6 +861,7 @@ let ws = null;
 let frameTimer = null;
 let frameCount = 0;
 let lastFps = performance.now();
+let cameraStartPending = false;
 let remoteBusy = false;
 let pendingRemoteFrame = null;
 let remotePumpScheduled = false;
@@ -902,6 +903,29 @@ function setStatus(text, on = false) {
   status.classList.toggle('on', on);
 }
 
+function startFramePump() {
+  clearInterval(frameTimer);
+  frameTimer = setInterval(() => {
+    if (!stream || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const qSize = ws.bufferedAmount || 0;
+    if (qSize > 2500000) return;
+    const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ws.send(JSON.stringify({
+      type: 'webcamFrame',
+      data: canvas.toDataURL('image/jpeg', quality)
+    }));
+    frameCount++;
+    const now = performance.now();
+    if (now - lastFps > 1000) {
+      remoteFrames.textContent = String(frameCount);
+      remoteFps.textContent = Math.round(frameCount * 1000 / (now - lastFps)) + ' FPS';
+      frameCount = 0;
+      lastFps = now;
+    }
+  }, 50);
+}
+
 function wsUrl() {
   return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
 }
@@ -912,8 +936,14 @@ function connect() {
   ws.onopen = () => {
     setStatus('WSS ONLINE', true);
     if (!humanReady) {
-      if (!humanReady) engineStatus.textContent = 'FRAME BUFFER';
+      engineStatus.textContent = 'FRAME BUFFER';
       enginePipe.textContent = 'BUFFER';
+    }
+    if (cameraStartPending && stream) {
+      cameraStartPending = false;
+      ws.send(JSON.stringify({ type: 'startRemoteCam' }));
+      startFramePump();
+      setStatus('CAMERA + WSS', true);
     }
   };
 
@@ -1002,26 +1032,12 @@ async function startCamera() {
     setStatus('CAMERA + WSS', true);
     ws?.send(JSON.stringify({ type: 'startRemoteCam' }));
 
-    clearInterval(frameTimer);
-    frameTimer = setInterval(() => {
-      if (!stream || !ws || ws.readyState !== WebSocket.OPEN) return;
-      const qSize = ws.bufferedAmount || 0;
-      if (qSize > 2500000) return;
-      const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      ws.send(JSON.stringify({
-        type: 'webcamFrame',
-        data: canvas.toDataURL('image/jpeg', quality)
-      }));
-      frameCount++;
-      const now = performance.now();
-      if (now - lastFps > 1000) {
-        remoteFrames.textContent = String(frameCount);
-        remoteFps.textContent = Math.round(frameCount * 1000 / (now - lastFps)) + ' FPS';
-        frameCount = 0;
-        lastFps = now;
-      }
-    }, 50);
+    cameraStartPending = true;
+    if (ws?.readyState === WebSocket.OPEN) {
+      cameraStartPending = false;
+      ws.send(JSON.stringify({ type: 'startRemoteCam' }));
+      startFramePump();
+    }
   } catch (err) {
     setStatus('ERRO CAMERA');
     alert('Não foi possível abrir a câmera: ' + err.name + ' — ' + err.message);
@@ -1031,6 +1047,7 @@ async function startCamera() {
 function stopCamera(notify = true) {
   clearInterval(frameTimer);
   frameTimer = null;
+  cameraStartPending = false;
   if (stream) stream.getTracks().forEach(track => track.stop());
   stream = null;
   video.srcObject = null;
