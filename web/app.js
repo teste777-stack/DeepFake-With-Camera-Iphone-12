@@ -815,7 +815,7 @@ function drawCompositor() {
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
   }
 }
-async async function detectFaceFrame() {
+async function detectFaceFrame() {
   if (!humanReady || faceDetectBusy || !remote.width) return;
   const now = performance.now();
   if (now - lastFaceDetect < 66) return;
