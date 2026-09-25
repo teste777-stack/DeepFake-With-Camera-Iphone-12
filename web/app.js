@@ -815,7 +815,7 @@ function drawCompositor() {
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
   }
 }
-async function detectFaceFrame() {
+async async function detectFaceFrame() {
   if (!humanReady || faceDetectBusy || !remote.width) return;
   const now = performance.now();
   if (now - lastFaceDetect < 66) return;
@@ -827,6 +827,12 @@ async function detectFaceFrame() {
     const faces = Array.isArray(result?.face) ? result.face : [];
     const count = faces.length;
     latestFaces = faces;
+    if (count > 0) {
+      lastValidFaceAt = performance.now();
+      faceTrackingReady = true;
+    } else {
+      faceTrackingReady = false;
+    }
     const ms = Number((performance.now() - t0).toFixed(2));
     faceCountEl.textContent = String(count);
     faceDetectMsEl.textContent = ms + ' ms';
