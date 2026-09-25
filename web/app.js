@@ -77,7 +77,7 @@ function seededRandom(seed) {
   };
 }
 
-function generateSyntheticFace(seed) {
+async function generateSyntheticFace(seed) {
   const rand = seededRandom(seed);
   const c = targetCanvas, ctx = targetCtx;
   c.width = remote.width; c.height = remote.height;
