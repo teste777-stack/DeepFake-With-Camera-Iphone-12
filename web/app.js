@@ -173,6 +173,7 @@ targetInput.onchange = async () => {
     targetMeshPoints = [];
     targetMeshTopology = [];
     targetBounds = null;
+    resetCompositorState(false);
     targetButton.textContent = 'TARGET / ANALYZING';
     meshPipe.textContent = 'ANALYZING TARGET';
     await detectTargetFace();
@@ -476,6 +477,27 @@ async function detectTargetFace() {
   }
 }
 
+function resetCompositorState(clearSource = false) {
+  latestFaces = [];
+  smoothedLandmarks = [];
+  faceTrackingReady = false;
+  lastValidFaceAt = 0;
+
+  compositorCtx.setTransform(1, 0, 0, 1, 0, 0);
+  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+  swapCtx.setTransform(1, 0, 0, 1, 0, 0);
+  swapCtx.clearRect(0, 0, swapLayer.width, swapLayer.height);
+  swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
+  swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
+
+  if (clearSource) {
+    sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
+    sourceFrameCtx.clearRect(0, 0, sourceFrame.width, sourceFrame.height);
+    remoteCtx.setTransform(1, 0, 0, 1, 0, 0);
+    remoteCtx.clearRect(0, 0, remote.width, remote.height);
+  }
+}
+
 function updateSwapMask(cx, cy, edge) {
   if (!swapMaskCtx) return;
   swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -776,9 +798,7 @@ async function startCamera() {
   try {
     if (stream) stopCamera(false);
     pendingRemoteFrame = null;
-    latestFaces = [];
-    smoothedLandmarks = [];
-    lastValidFaceAt = 0;
+    resetCompositorState(false);
     await new Promise(resolve => requestAnimationFrame(resolve));
     stream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -847,13 +867,7 @@ function stopCamera(notify = true) {
 
   // Do not keep compositing the last camera frame after the camera stops.
   pendingRemoteFrame = null;
-  latestFaces = [];
-  smoothedLandmarks = [];
-  lastValidFaceAt = 0;
-  sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
-  sourceFrameCtx.clearRect(0, 0, sourceFrame.width, sourceFrame.height);
-  remoteCtx.clearRect(0, 0, remote.width, remote.height);
-  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+  resetCompositorState(true);
 
   placeholder.style.display = 'block';
   start.disabled = false;
