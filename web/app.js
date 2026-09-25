@@ -297,20 +297,34 @@ function landmarkJumpTooLarge(points) {
 }
 
 function smoothLandmarks(points) {
-  if (!points.length) {
-    return smoothedLandmarks;
-  }
+  if (!points.length) return smoothedLandmarks;
 
   if (landmarkJumpTooLarge(points)) {
     lastValidFaceAt = performance.now();
     return smoothedLandmarks;
   }
 
-  const alpha = 0.34;
   if (smoothedLandmarks.length !== points.length) {
     smoothedLandmarks = points.map(p => p.slice());
     return smoothedLandmarks;
   }
+
+  // Adaptive temporal smoothing: slow movements stay stable, while faster
+  // movements get a higher response so the synthetic face does not visibly
+  // lag behind the real subject.
+  let sumJump = 0;
+  for (let n = 0; n < points.length; n++) {
+    sumJump += Math.hypot(
+      points[n][0] - smoothedLandmarks[n][0],
+      points[n][1] - smoothedLandmarks[n][1]
+    );
+  }
+  const meanJump = sumJump / points.length;
+  const bounds = faceBounds(points);
+  const reference = Math.max(30, bounds?.w || 30, bounds?.h || 30);
+  const movement = Math.min(1, meanJump / (reference * 0.18));
+  const alpha = 0.28 + movement * 0.34;
+
   for (let n = 0; n < points.length; n++) {
     smoothedLandmarks[n][0] += (points[n][0] - smoothedLandmarks[n][0]) * alpha;
     smoothedLandmarks[n][1] += (points[n][1] - smoothedLandmarks[n][1]) * alpha;
