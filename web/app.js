@@ -215,8 +215,7 @@ targetInput.onchange = async () => {
     syntheticIdentity = null;
     identityReady = false;
     syntheticMeshKey = '';
-    targetImage = null;
-    identityReady = false;
+    syntheticCanonicalLandmarks = [];
     targetButton.textContent = 'TARGET ERROR';
   }
 };
@@ -479,22 +478,31 @@ function warpTriangleImage(ctx, image, src, dst) {
 async function detectTargetFace() {
   if (!humanReady || targetDetectBusy || !targetCanvas.width) return;
   targetDetectBusy = true;
+
+  // Never keep mesh data from a previous target/detection attempt.
+  // Otherwise a failed detection can leave a stale topology that is later
+  // paired with a new synthetic target or manual image.
+  targetLandmarks = [];
+  targetMeshPoints = [];
+  targetMeshTopology = [];
+  targetBounds = null;
+
   try {
     const result = await human.detect(targetCanvas);
     const faces = Array.isArray(result?.face) ? result.face : [];
     targetLandmarks = faces[0] ? extractLandmarks(faces[0]) : [];
     targetBounds = faceBounds(targetLandmarks);
+
     if (targetLandmarks.length >= 10 && targetBounds) {
       const step = getMeshStep(targetLandmarks.length);
-      targetMeshPoints = [];
-      for (let n = 0; n < targetLandmarks.length; n += step) targetMeshPoints.push(targetLandmarks[n]);
+      for (let n = 0; n < targetLandmarks.length; n += step) {
+        targetMeshPoints.push(targetLandmarks[n]);
+      }
       targetMeshTopology = buildDelaunay(targetMeshPoints);
     }
   } catch (err) {
-    targetLandmarks = [];
-    targetMeshPoints = [];
-    targetMeshTopology = [];
-    targetBounds = null;
+    // The cleared state above intentionally leaves the compositor free to
+    // use its synthetic/live-mesh fallback when appropriate.
   } finally {
     targetDetectBusy = false;
   }
