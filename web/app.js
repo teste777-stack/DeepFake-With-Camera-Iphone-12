@@ -51,19 +51,6 @@ const processMs = document.getElementById('processMs');
 const faceCountEl = document.getElementById('faceCount');
 const faceDetectMsEl = document.getElementById('faceDetectMs');
 const meshPipe = document.getElementById('meshPipe');
-const targetInput = document.createElement('input');
-targetInput.type = 'file';
-targetInput.accept = 'image/*';
-targetInput.style.display = 'none';
-document.body.appendChild(targetInput);
-
-const targetButton = document.createElement('button');
-targetButton.textContent = 'LOAD TARGET';
-targetButton.className = 'secondary';
-targetButton.style.marginTop = '8px';
-const controls = document.querySelector('.controls');
-if (controls) controls.appendChild(targetButton);
-
 const seedInput = document.getElementById('seedInput');
 const generateFaceButton = document.getElementById('generateFace');
 const randomFaceButton = document.getElementById('randomFace');
@@ -80,146 +67,157 @@ function seededRandom(seed) {
 async function generateSyntheticFace(seed) {
   const rand = seededRandom(seed);
   const c = targetCanvas, ctx = targetCtx;
-  c.width = remote.width; c.height = remote.height;
+  c.width = remote.width;
+  c.height = remote.height;
   ctx.clearRect(0, 0, c.width, c.height);
 
-  const skin = ['#e8b08c','#c98763','#f0c09b','#a96548','#d89a72'][Math.floor(rand()*5)];
-  const hair = ['#15110f','#2b211d','#3a2720','#11151b','#4a3024'][Math.floor(rand()*5)];
-  const eye = ['#24160f','#3b2a1c','#536b61','#2f4058'][Math.floor(rand()*4)];
-  const faceW = 150 + rand()*55, faceH = 205 + rand()*45;
-  const cx = c.width*.5 + (rand()-.5)*18, cy = c.height*.52;
-  const eyeY = cy - faceH*.12, eyeGap = faceW*.20;
+  const skin = ['#e6ad88','#c98763','#efbd98','#a96548','#d99b73'][Math.floor(rand() * 5)];
+  const skinShadow = ['#7d4638','#6b392f','#8b5140','#60352d'][Math.floor(rand() * 4)];
+  const hair = ['#15110f','#2b211d','#3a2720','#11151b','#4a3024'][Math.floor(rand() * 5)];
+  const eye = ['#24160f','#3b2a1c','#536b61','#2f4058'][Math.floor(rand() * 4)];
+  const faceW = 154 + rand() * 62;
+  const faceH = 210 + rand() * 52;
+  const cx = c.width * 0.5 + (rand() - 0.5) * 12;
+  const cy = c.height * 0.51;
+  const eyeY = cy - faceH * 0.105;
+  const eyeGap = faceW * (0.185 + rand() * 0.035);
+  const mouthW = faceW * (0.27 + rand() * 0.10);
+  const jaw = 0.94 + rand() * 0.12;
   const identityGeometry = { cx, cy, faceW, faceH };
-  const mouthW = faceW*(.25 + rand()*.10);
 
-  // Transparent identity layer: only the generated face is composited over the live camera.
-  // The live camera remains the background and is never replaced by the synthetic canvas.
+  // Fully generated identity: no PNG, photo or external reference.
   ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(jaw, 1);
+  ctx.translate(-cx, -cy);
+
+  // Ears and neck provide a larger, more coherent silhouette.
+  ctx.fillStyle = skinShadow;
   ctx.beginPath();
-  ctx.ellipse(cx,cy,faceW*.5,faceH*.5,0,0,Math.PI*2);
-  const sg=ctx.createRadialGradient(cx-faceW*.15,cy-faceH*.2,10,cx,cy,faceW*.65);
-  sg.addColorStop(0,skin); sg.addColorStop(1,'#6f4033');
-  ctx.fillStyle=sg; ctx.fill();
+  ctx.ellipse(cx - faceW * 0.49, cy + faceH * 0.02, faceW * 0.10, faceH * 0.17, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + faceW * 0.49, cy + faceH * 0.02, faceW * 0.10, faceH * 0.17, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = skin;
+  ctx.fillRect(cx - faceW * 0.19, cy + faceH * 0.38, faceW * 0.38, faceH * 0.34);
+
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, faceW * 0.5, faceH * 0.5, 0, 0, Math.PI * 2);
+  const sg = ctx.createRadialGradient(cx - faceW * 0.18, cy - faceH * 0.22, 8, cx, cy, faceW * 0.67);
+  sg.addColorStop(0, '#f4c9a7');
+  sg.addColorStop(0.34, skin);
+  sg.addColorStop(0.82, skin);
+  sg.addColorStop(1, skinShadow);
+  ctx.fillStyle = sg;
+  ctx.fill();
   ctx.clip();
 
-  ctx.fillStyle=hair;
+  // Hair cap and side mass.
+  ctx.fillStyle = hair;
   ctx.beginPath();
-  ctx.ellipse(cx,cy-faceH*.48,faceW*.59,faceH*.35,0,0,Math.PI*2); ctx.fill();
-  ctx.fillRect(cx-faceW*.59,cy-faceH*.42,faceW*1.18,faceH*.20);
+  ctx.ellipse(cx, cy - faceH * 0.43, faceW * 0.59, faceH * 0.34, 0, Math.PI, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(cx - faceW * 0.57, cy - faceH * 0.43, faceW * 0.15, faceH * 0.30);
+  ctx.fillRect(cx + faceW * 0.42, cy - faceH * 0.43, faceW * 0.15, faceH * 0.30);
 
-  const browTilt=(rand()-.5)*.16;
-  ctx.strokeStyle='#3b241d'; ctx.lineWidth=7; ctx.lineCap='round';
-  for(const side of [-1,1]){
-    ctx.beginPath(); ctx.moveTo(cx+side*eyeGap-faceW*.11,eyeY-faceH*(.08+browTilt*side));
-    ctx.lineTo(cx+side*eyeGap+faceW*.11,eyeY-faceH*(.08-browTilt*side)); ctx.stroke();
+  // Brows, eyelids and irises.
+  const browTilt = (rand() - 0.5) * 0.10;
+  ctx.strokeStyle = '#3b241d';
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  for (const side of [-1, 1]) {
+    const ex = cx + side * eyeGap;
+    ctx.beginPath();
+    ctx.moveTo(ex - faceW * 0.105, eyeY - faceH * (0.078 + browTilt * side));
+    ctx.lineTo(ex + faceW * 0.105, eyeY - faceH * (0.078 - browTilt * side));
+    ctx.stroke();
+
+    ctx.fillStyle = '#f7f0e8';
+    ctx.beginPath();
+    ctx.ellipse(ex, eyeY, faceW * 0.105, faceH * 0.043, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = eye;
+    ctx.beginPath();
+    ctx.arc(ex, eyeY, Math.max(5, faceW * 0.038), 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#050505';
+    ctx.beginPath();
+    ctx.arc(ex, eyeY, Math.max(2, faceW * 0.018), 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255,255,255,.8)';
+    ctx.beginPath();
+    ctx.arc(ex - faceW * 0.012, eyeY - faceH * 0.012, Math.max(1.5, faceW * 0.009), 0, Math.PI * 2);
+    ctx.fill();
   }
 
-  for(const side of [-1,1]){
-    const ex=cx+side*eyeGap;
-    ctx.fillStyle='#f5eee8'; ctx.beginPath(); ctx.ellipse(ex,eyeY,faceW*.105,faceH*.042,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle=eye; ctx.beginPath(); ctx.arc(ex,eyeY,Math.max(5,faceW*.038),0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#050505'; ctx.beginPath(); ctx.arc(ex,eyeY,Math.max(2,faceW*.018),0,Math.PI*2); ctx.fill();
+  // Nose bridge, tip and subtle cheek planes.
+  ctx.strokeStyle = 'rgba(95,49,38,.72)';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(cx, eyeY + faceH * 0.04);
+  ctx.quadraticCurveTo(cx - faceW * 0.035, cy + faceH * 0.02, cx - faceW * 0.012, cy + faceH * 0.12);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,205,170,.28)';
+  ctx.beginPath();
+  ctx.ellipse(cx - faceW * 0.20, cy + faceH * 0.04, faceW * 0.17, faceH * 0.12, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + faceW * 0.20, cy + faceH * 0.04, faceW * 0.17, faceH * 0.12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Lips with a dark separation line.
+  ctx.fillStyle = '#a6534d';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + faceH * 0.235, mouthW * 0.50, faceH * 0.043, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#351719';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + faceH * 0.235, mouthW * 0.42, faceH * 0.014, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Small deterministic skin highlights/freckles add identity variation.
+  ctx.fillStyle = 'rgba(90,48,38,.22)';
+  for (let i = 0; i < 22; i++) {
+    const fx = cx + (rand() - 0.5) * faceW * 0.62;
+    const fy = cy + (rand() - 0.5) * faceH * 0.52;
+    ctx.beginPath();
+    ctx.arc(fx, fy, 0.7 + rand() * 1.2, 0, Math.PI * 2);
+    ctx.fill();
   }
-
-  ctx.strokeStyle='rgba(85,45,35,.75)'; ctx.lineWidth=5; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(cx,eyeY+10); ctx.quadraticCurveTo(cx-faceW*.025,cy-faceH*.02,cx-faceW*.01,cy+faceH*.10); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(cx-faceW*.05,cy+faceH*.11); ctx.quadraticCurveTo(cx,cy+faceH*.14,cx+faceW*.05,cy+faceH*.11); ctx.stroke();
-
-  ctx.fillStyle='#9d554e'; ctx.beginPath();
-  ctx.ellipse(cx,cy+faceH*.23,mouthW*.5,faceH*.035,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#3a1718'; ctx.beginPath();
-  ctx.ellipse(cx,cy+faceH*.23,mouthW*.42,faceH*.015,0,0,Math.PI*2); ctx.fill();
 
   ctx.restore();
-  targetImage = targetCtx.getImageData(0,0,c.width,c.height);
-  targetLandmarks=[]; targetMeshPoints=[]; targetMeshTopology=[]; targetBounds=null;
+
+  targetImage = targetCtx.getImageData(0, 0, c.width, c.height);
+  targetLandmarks = [];
+  targetMeshPoints = [];
+  targetMeshTopology = [];
+  targetBounds = null;
   syntheticCanonicalLandmarks = [];
   syntheticIdentity = { seed: Number(seed) >>> 0, geometry: identityGeometry };
   syntheticMeshKey = '';
   identityReady = true;
-  targetButton.textContent='SYNTHETIC FACE';
-  identityStatus.textContent='SYNTHETIC IDENTITY READY / SEED ' + syntheticIdentity.seed;
-  meshPipe.textContent='ANALYZING SYNTHETIC TARGET';
+  identityStatus.textContent = 'GENERATED IDENTITY READY / SEED ' + syntheticIdentity.seed;
+  meshPipe.textContent = 'GENERATED FACE / TRACKING READY';
 
-  // Use Human.js to locate the mesh on the actual generated pixels when
-  // possible. This is more accurate than deriving the target mesh from the
-  // first live face, because the latter makes the synthetic identity inherit
-  // the camera subject's landmark layout.
   if (humanReady) {
     await detectTargetFace();
     if (targetMeshPoints.length >= 12 && targetMeshTopology.length) {
-      meshPipe.textContent='SYNTHETIC TARGET MESH READY';
-      identityStatus.textContent='SYNTHETIC IDENTITY READY / TARGET MESH';
+      meshPipe.textContent = 'GENERATED IDENTITY MESH READY';
+      identityStatus.textContent = 'GENERATED IDENTITY READY / MESH';
     } else {
-      meshPipe.textContent='SYNTHETIC TARGET / LIVE MESH FALLBACK';
+      meshPipe.textContent = 'GENERATED IDENTITY / LIVE MESH';
     }
-  } else {
-    meshPipe.textContent='WAITING FOR FACE ENGINE';
   }
-
-  engineStatus.textContent = 'SYNTHETIC IDENTITY READY';
-  enginePipe.textContent = 'IDENTITY';
+  engineStatus.textContent = 'GENERATED IDENTITY READY';
+  enginePipe.textContent = 'GENERATED IDENTITY';
 }
-
 generateFaceButton?.addEventListener('click', () => generateSyntheticFace(seedInput.value));
 randomFaceButton?.addEventListener('click', () => {
   const seed = Math.floor(Math.random()*2147483647);
   seedInput.value = String(seed);
   generateSyntheticFace(seed);
 });
-
-targetButton.onclick = () => targetInput.click();
-targetInput.onchange = async () => {
-  const file = targetInput.files?.[0];
-  if (!file) return;
-  try {
-    const bitmap = await createImageBitmap(file);
-    targetCanvas.width = remote.width;
-    targetCanvas.height = remote.height;
-    targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
-    const scale = Math.max(targetCanvas.width / bitmap.width, targetCanvas.height / bitmap.height);
-    const w = bitmap.width * scale, h = bitmap.height * scale;
-    targetCtx.drawImage(bitmap, (targetCanvas.width - w) * 0.5, (targetCanvas.height - h) * 0.5, w, h);
-    bitmap.close();
-    targetImage = targetCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
-    syntheticIdentity = null;
-    identityReady = false;
-    syntheticMeshKey = '';
-    syntheticCanonicalLandmarks = [];
-    targetLandmarks = [];
-    targetMeshPoints = [];
-    targetMeshTopology = [];
-    targetBounds = null;
-    resetCompositorState(false);
-    targetButton.textContent = 'TARGET / ANALYZING';
-    meshPipe.textContent = 'ANALYZING TARGET';
-    await detectTargetFace();
-    if (targetLandmarks.length >= 10) {
-      identityReady = true;
-      faceTrackingReady = false;
-      targetButton.textContent = 'TARGET FACE READY';
-      identityStatus.textContent = 'TARGET FACE READY / TRACKABLE';
-      meshPipe.textContent = 'TARGET FACE READY';
-    } else {
-      targetButton.textContent = 'TARGET FACE NOT FOUND';
-      targetImage = null;
-      identityReady = false;
-      meshPipe.textContent = 'LOAD CLEAR FACE';
-    }
-  } catch {
-    targetImage = null;
-    targetLandmarks = [];
-    targetMeshPoints = [];
-    targetMeshTopology = [];
-    targetBounds = null;
-    syntheticIdentity = null;
-    identityReady = false;
-    syntheticMeshKey = '';
-    syntheticCanonicalLandmarks = [];
-    targetButton.textContent = 'TARGET ERROR';
-  }
-};
-
 
 
 let human = null;
@@ -256,6 +254,9 @@ async function initFaceEngine() {
   await human.load();
   await human.warmup();
   humanReady = true;
+  if (!syntheticIdentity) {
+    await generateSyntheticFace(seedInput?.value || 184729);
+  }
   engineStatus.textContent = 'FACE ENGINE WEBGL';
   if (targetImage && !targetLandmarks.length) {
     await detectTargetFace();
@@ -1074,6 +1075,7 @@ async function startCamera() {
     stop.disabled = false;
     flip.disabled = false;
     setStatus('CAMERA + WSS', true);
+    if (!syntheticIdentity) await generateSyntheticFace(seedInput?.value || 184729);
     ws?.send(JSON.stringify({ type: 'startRemoteCam' }));
 
     cameraStartPending = true;
