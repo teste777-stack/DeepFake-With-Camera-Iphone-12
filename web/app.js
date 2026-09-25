@@ -868,6 +868,11 @@ let remotePumpScheduled = false;
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 
+function scheduleLocalDetection() {
+  if (!humanReady || faceDetectBusy || !sourceFrame.width) return;
+  detectFaceFrame();
+}
+
 async function pumpRemoteFrame() {
   remotePumpScheduled = false;
   if (remoteBusy || !pendingRemoteFrame) return;
@@ -911,6 +916,14 @@ function startFramePump() {
     if (qSize > 2500000) return;
     const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // The WebSocket server broadcasts remoteFrame to other clients, not back
+    // to the camera sender. Feed the local camera frame directly into the
+    // compositor as well, otherwise the same iPhone page can stay at
+    // FRAMES 0 / FACES 0 forever even while WSS is healthy.
+    sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
+    scheduleLocalDetection();
+
     ws.send(JSON.stringify({
       type: 'webcamFrame',
       data: canvas.toDataURL('image/jpeg', quality)
