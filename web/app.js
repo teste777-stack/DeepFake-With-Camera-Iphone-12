@@ -643,8 +643,39 @@ let frameCount = 0;
 let lastFps = performance.now();
 let remoteBusy = false;
 let pendingRemoteFrame = null;
+let remotePumpScheduled = false;
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d', { alpha: false });
+
+async function pumpRemoteFrame() {
+  remotePumpScheduled = false;
+  if (remoteBusy || !pendingRemoteFrame) return;
+
+  remoteBusy = true;
+  const frameData = pendingRemoteFrame;
+  pendingRemoteFrame = null;
+  try {
+    const blob = await fetch(frameData).then(r => r.blob());
+    const bitmap = await createImageBitmap(blob);
+    sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
+    remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
+    bitmap.close();
+    detectFaceFrame();
+  } catch {
+    // Ignore a malformed/stale frame and keep the live stream running.
+  } finally {
+    remoteBusy = false;
+    if (pendingRemoteFrame) scheduleRemotePump();
+  }
+}
+
+function scheduleRemotePump() {
+  if (remotePumpScheduled) return;
+  remotePumpScheduled = true;
+  // Yield one turn so the compositor/UI gets time even when frames arrive
+  // faster than JPEG decoding.
+  setTimeout(pumpRemoteFrame, 0);
+}
 
 function setStatus(text, on = false) {
   status.textContent = text;
@@ -676,26 +707,11 @@ function connect() {
     try { msg = JSON.parse(event.data); } catch { return; }
 
     if (msg.type === 'remoteFrame') {
-      // Latest-frame-wins: if JPEG decode is still busy, retain only the newest
-      // frame instead of building latency by silently dropping an arbitrary frame.
+      // Latest-frame-wins without a long async loop. A continuously arriving
+      // stream must yield back to the browser between decodes so detection,
+      // painting and UI events cannot be starved.
       pendingRemoteFrame = msg.data;
-      if (remoteBusy) return;
-
-      remoteBusy = true;
-      try {
-        while (pendingRemoteFrame) {
-          const frameData = pendingRemoteFrame;
-          pendingRemoteFrame = null;
-          const blob = await fetch(frameData).then(r => r.blob());
-          const bitmap = await createImageBitmap(blob);
-          sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
-          remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
-          bitmap.close();
-          detectFaceFrame();
-          // If another frame arrived during decode, process only that newest one.
-        }
-      } catch {}
-      remoteBusy = false;
+      scheduleRemotePump();
     }
 
     if (msg.type === 'hello' && msg.hasFrame && !humanReady) {
@@ -795,6 +811,17 @@ function stopCamera(notify = true) {
   if (stream) stream.getTracks().forEach(track => track.stop());
   stream = null;
   video.srcObject = null;
+
+  // Do not keep compositing the last camera frame after the camera stops.
+  pendingRemoteFrame = null;
+  latestFaces = [];
+  smoothedLandmarks = [];
+  lastValidFaceAt = 0;
+  sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
+  sourceFrameCtx.clearRect(0, 0, sourceFrame.width, sourceFrame.height);
+  remoteCtx.clearRect(0, 0, remote.width, remote.height);
+  compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+
   placeholder.style.display = 'block';
   start.disabled = false;
   stop.disabled = true;
