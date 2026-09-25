@@ -733,39 +733,70 @@ function warpFace(points) {
     targetMeshTopology.length > 0;
 
   if (hasSynthetic && (!targetMeshPoints.length || !targetMeshTopology.length)) {
-    if (!buildSyntheticTarget(points)) return false;
+    buildSyntheticTarget(points);
   }
 
   if (!hasSynthetic && !hasManualTarget) return false;
-  if (targetMeshPoints.length < 12 || !targetMeshTopology.length) return false;
-
-  const liveStep = getMeshStep(points.length);
-  const liveMeshPoints = [];
-  for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
-  if (liveMeshPoints.length !== targetMeshPoints.length) return false;
 
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
-  // Render only the warped face into a transparent layer.
-  // The live camera remains the immutable background.
   swapCtx.setTransform(1, 0, 0, 1, 0, 0);
   swapCtx.clearRect(0, 0, swapLayer.width, swapLayer.height);
 
   const cx = (b.minX + b.maxX) * 0.5;
   const cy = (b.minY + b.maxY) * 0.5;
-  const edge = Math.max(b.w, b.h);
   const faceTilt = estimateFaceTilt(points);
 
-  swapCtx.save();
-  swapCtx.beginPath();
-  swapCtx.ellipse(cx, cy, b.w * 0.58, b.h * 0.64, faceTilt, 0, Math.PI * 2);
-  swapCtx.clip();
+  // Always keep a real synthetic-face render path. The mesh warp is preferred,
+  // but a failed/mismatched mesh must not result in "no generated face".
+  // This fallback scales the generated identity into the tracked face and
+  // follows its rotation, so the user still gets a visible identity.
+  const liveStep = getMeshStep(points.length);
+  const liveMeshPoints = [];
+  for (let n = 0; n < points.length; n += liveStep) liveMeshPoints.push(points[n]);
 
-  for (const tri of targetMeshTopology) {
-    const src = tri.map(i => targetMeshPoints[i]);
-    const dst = tri.map(i => liveMeshPoints[i]);
-    warpTriangleImage(swapCtx, targetCanvas, src, dst);
+  const meshReady =
+    targetMeshPoints.length >= 12 &&
+    targetMeshTopology.length > 0 &&
+    liveMeshPoints.length === targetMeshPoints.length;
+
+  swapCtx.save();
+  swapCtx.translate(cx, cy);
+  swapCtx.rotate(faceTilt);
+
+  if (meshReady) {
+    swapCtx.translate(-cx, -cy);
+    swapCtx.beginPath();
+    swapCtx.ellipse(cx, cy, b.w * 0.58, b.h * 0.64, 0, 0, Math.PI * 2);
+    swapCtx.clip();
+
+    for (const tri of targetMeshTopology) {
+      const src = tri.map(i => targetMeshPoints[i]);
+      const dst = tri.map(i => liveMeshPoints[i]);
+      warpTriangleImage(swapCtx, targetCanvas, src, dst);
+    }
+  } else if (hasSynthetic && targetCanvas.width && targetCanvas.height) {
+    // Direct synthetic identity fallback: no dependency on Human.js being able
+    // to recognize the procedural target itself.
+    const targetW = syntheticIdentity?.geometry?.faceW || Math.max(120, b.w);
+    const targetH = syntheticIdentity?.geometry?.faceH || Math.max(170, b.h);
+    const scaleX = (b.w * 1.16) / Math.max(1, targetW);
+    const scaleY = (b.h * 1.28) / Math.max(1, targetH);
+    swapCtx.drawImage(
+      targetCanvas,
+      syntheticIdentity?.geometry?.cx - targetW * 0.5,
+      syntheticIdentity?.geometry?.cy - targetH * 0.5,
+      targetW,
+      targetH,
+      -targetW * scaleX * 0.5,
+      -targetH * scaleY * 0.5,
+      targetW * scaleX,
+      targetH * scaleY
+    );
+  } else {
+    swapCtx.restore();
+    return false;
   }
 
   swapCtx.restore();
