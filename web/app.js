@@ -38,6 +38,8 @@ let compositorMode = 'TARGET READY';
 let syntheticIdentity = null;
 let identityReady = false;
 let faceTrackingReady = false;
+let lastValidFaceAt = 0;
+const faceTrackingGraceMs = 180;
 let lastCompositorFrame = 0;
 let syntheticMeshKey = '';
 let syntheticCanonicalLandmarks = [];
@@ -251,8 +253,7 @@ function extractLandmarks(face) {
 
 function smoothLandmarks(points) {
   if (!points.length) {
-    smoothedLandmarks = [];
-    return [];
+    return smoothedLandmarks;
   }
   const alpha = 0.34;
   if (smoothedLandmarks.length !== points.length) {
@@ -580,7 +581,11 @@ function drawCompositor() {
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
   const face = latestFaces[0];
-  const points = face ? smoothLandmarks(extractLandmarks(face)) : [];
+  const trackedPoints = face ? extractLandmarks(face) : [];
+  const nowTracking = performance.now();
+  const points = trackedPoints.length >= 10
+    ? smoothLandmarks(trackedPoints)
+    : ((nowTracking - lastValidFaceAt) <= faceTrackingGraceMs ? smoothedLandmarks : []);
   if (points.length >= 10 && warpFace(points)) {
     if (syntheticIdentity) {
       meshPipe.textContent = 'FACE SWAP ACTIVE / SYNTHETIC IDENTITY';
@@ -592,6 +597,7 @@ function drawCompositor() {
     remoteCtx.drawImage(compositor, 0, 0);
   } else {
     remoteCtx.drawImage(sourceFrame, 0, 0);
+    if (performance.now() - lastValidFaceAt > faceTrackingGraceMs) smoothedLandmarks = [];
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
   }
 }
@@ -611,6 +617,7 @@ async function detectFaceFrame() {
     faceCountEl.textContent = String(count);
     faceDetectMsEl.textContent = ms + ' ms';
     faceTrackingReady = count > 0;
+    if (count > 0) lastValidFaceAt = performance.now();
     meshPipe.textContent = count ? (identityReady ? 'LANDMARKS LIVE / IDENTITY READY' : 'LANDMARKS LIVE') : (identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING');
     engineStatus.textContent = count ? (identityReady ? 'FACE DETECTED / READY' : 'FACE DETECTED') : (identityReady ? 'IDENTITY READY / WAITING FACE' : 'FACE-SCAN');
     enginePipe.textContent = count ? (identityReady ? 'TRACK + COMPOSITE' : 'LANDMARKS') : 'FACE DETECTOR';
@@ -635,6 +642,7 @@ let frameTimer = null;
 let frameCount = 0;
 let lastFps = performance.now();
 let remoteBusy = false;
+let pendingRemoteFrame = null;
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 
@@ -668,15 +676,24 @@ function connect() {
     try { msg = JSON.parse(event.data); } catch { return; }
 
     if (msg.type === 'remoteFrame') {
+      // Latest-frame-wins: if JPEG decode is still busy, retain only the newest
+      // frame instead of building latency by silently dropping an arbitrary frame.
+      pendingRemoteFrame = msg.data;
       if (remoteBusy) return;
+
       remoteBusy = true;
       try {
-        const blob = await fetch(msg.data).then(r => r.blob());
-        const bitmap = await createImageBitmap(blob);
-        sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
-        remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
-        bitmap.close();
-        detectFaceFrame();
+        while (pendingRemoteFrame) {
+          const frameData = pendingRemoteFrame;
+          pendingRemoteFrame = null;
+          const blob = await fetch(frameData).then(r => r.blob());
+          const bitmap = await createImageBitmap(blob);
+          sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
+          remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
+          bitmap.close();
+          detectFaceFrame();
+          // If another frame arrived during decode, process only that newest one.
+        }
       } catch {}
       remoteBusy = false;
     }
