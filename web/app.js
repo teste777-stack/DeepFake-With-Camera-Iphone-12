@@ -680,6 +680,34 @@ function buildSyntheticTarget(points) {
   return targetMeshPoints.length >= 12 && targetMeshTopology.length > 0;
 }
 
+function estimateFaceTilt(points) {
+  if (points.length < 8) return 0;
+
+  let cx = 0, cy = 0;
+  for (const [x, y] of points) {
+    cx += x;
+    cy += y;
+  }
+  cx /= points.length;
+  cy /= points.length;
+
+  let xx = 0, xy = 0, yy = 0;
+  for (const [x, y] of points) {
+    const dx = x - cx;
+    const dy = y - cy;
+    xx += dx * dx;
+    xy += dx * dy;
+    yy += dy * dy;
+  }
+
+  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
+  // PCA returns the major axis. The face is normally taller than wide, so
+  // convert that axis to the rotation expected by ellipse() for its vertical
+  // radius. Clamp extreme estimates to avoid reacting to malformed meshes.
+  const tilt = angle - Math.PI * 0.5;
+  return Math.max(-0.55, Math.min(0.55, tilt));
+}
+
 function warpFace(points) {
   const b = faceBounds(points);
   if (!b || b.w < 30 || b.h < 30) return false;
@@ -713,10 +741,11 @@ function warpFace(points) {
   const cx = (b.minX + b.maxX) * 0.5;
   const cy = (b.minY + b.maxY) * 0.5;
   const edge = Math.max(b.w, b.h);
+  const faceTilt = estimateFaceTilt(points);
 
   swapCtx.save();
   swapCtx.beginPath();
-  swapCtx.ellipse(cx, cy, b.w * 0.58, b.h * 0.64, 0, 0, Math.PI * 2);
+  swapCtx.ellipse(cx, cy, b.w * 0.58, b.h * 0.64, faceTilt, 0, Math.PI * 2);
   swapCtx.clip();
 
   for (const tri of targetMeshTopology) {
