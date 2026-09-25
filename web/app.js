@@ -650,13 +650,27 @@ function buildSyntheticTarget(points) {
   const sy = Math.max(110, g.faceH);
 
   // Build the synthetic identity geometry only once per generated seed.
-  // The source mesh must stay stable while the destination mesh follows the
-  // live face. Rebuilding the source landmarks every frame caused the
-  // synthetic identity itself to deform with the camera.
+  // The source mesh stays stable while the destination mesh follows the
+  // live face. The first live sample is used only to capture facial shape,
+  // not to lock its camera rotation into the synthetic identity.
   if (!syntheticCanonicalLandmarks.length || syntheticCanonicalLandmarks.length !== points.length) {
+    const liveCx = (liveBounds.minX + liveBounds.maxX) * 0.5;
+    const liveCy = (liveBounds.minY + liveBounds.maxY) * 0.5;
+    const liveTilt = estimateFaceTilt(points);
+    const cos = Math.cos(-liveTilt);
+    const sin = Math.sin(-liveTilt);
+
     syntheticCanonicalLandmarks = points.map(([x, y]) => {
-      const nx = (x - liveBounds.minX) / Math.max(1, liveBounds.w);
-      const ny = (y - liveBounds.minY) / Math.max(1, liveBounds.h);
+      // Normalize around the live face center, remove the initial roll, then
+      // fit the result into the generated identity's stable coordinate frame.
+      // This prevents a tilted first frame from permanently skewing the
+      // synthetic source mesh and makes later scale/roll changes follow the
+      // current tracked face instead.
+      const dx = (x - liveCx) / Math.max(1, liveBounds.w);
+      const dy = (y - liveCy) / Math.max(1, liveBounds.h);
+      const nx = Math.max(-0.5, Math.min(0.5, dx * cos - dy * sin)) + 0.5;
+      const ny = Math.max(-0.5, Math.min(0.5, dx * sin + dy * cos)) + 0.5;
+
       return [
         g.cx - sx * 0.5 + nx * sx,
         g.cy - sy * 0.5 + ny * sy
