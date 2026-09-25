@@ -139,7 +139,24 @@ function generateSyntheticFace(seed) {
   identityReady = true;
   targetButton.textContent='SYNTHETIC FACE';
   identityStatus.textContent='SYNTHETIC IDENTITY READY / SEED ' + syntheticIdentity.seed;
-  meshPipe.textContent='WAITING FOR LIVE FACE';
+  meshPipe.textContent='ANALYZING SYNTHETIC TARGET';
+
+  // Use Human.js to locate the mesh on the actual generated pixels when
+  // possible. This is more accurate than deriving the target mesh from the
+  // first live face, because the latter makes the synthetic identity inherit
+  // the camera subject's landmark layout.
+  if (humanReady) {
+    await detectTargetFace();
+    if (targetMeshPoints.length >= 12 && targetMeshTopology.length) {
+      meshPipe.textContent='SYNTHETIC TARGET MESH READY';
+      identityStatus.textContent='SYNTHETIC IDENTITY READY / TARGET MESH';
+    } else {
+      meshPipe.textContent='SYNTHETIC TARGET / LIVE MESH FALLBACK';
+    }
+  } else {
+    meshPipe.textContent='WAITING FOR FACE ENGINE';
+  }
+
   engineStatus.textContent = 'SYNTHETIC IDENTITY READY';
   enginePipe.textContent = 'IDENTITY';
 }
@@ -241,7 +258,13 @@ async function initFaceEngine() {
   await human.warmup();
   humanReady = true;
   engineStatus.textContent = 'FACE ENGINE WEBGL';
-  if (targetImage && !targetLandmarks.length && !syntheticIdentity) await detectTargetFace();
+  if (targetImage && !targetLandmarks.length) {
+    await detectTargetFace();
+    if (syntheticIdentity && targetMeshPoints.length) {
+      meshPipe.textContent = 'SYNTHETIC TARGET MESH READY';
+      identityStatus.textContent = 'SYNTHETIC IDENTITY READY / TARGET MESH';
+    }
+  }
   enginePipe.textContent = 'FACE DETECTOR';
 }
 
