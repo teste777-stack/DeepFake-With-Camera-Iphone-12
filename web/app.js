@@ -458,12 +458,28 @@ function warpTriangleImage(ctx, image, src, dst) {
   const [u0,v0] = dst[0], [u1,v1] = dst[1], [u2,v2] = dst[2];
   const den = x0*(y1-y2) + x1*(y2-y0) + x2*(y0-y1);
   if (Math.abs(den) < 0.001) return;
+
   const a = (u0*(y1-y2)+u1*(y2-y0)+u2*(y0-y1))/den;
   const c = (u0*(x2-x1)+u1*(x0-x2)+u2*(x1-x0))/den;
-  const e = u0 - a*x0 - c*y0;
   const b = (v0*(y1-y2)+v1*(y2-y0)+v2*(y0-y1))/den;
   const d = (v0*(x2-x1)+v1*(x0-x2)+v2*(x1-x0))/den;
-  const f = v0 - b*x0 - d*y0;
+
+  // Draw only the source triangle's small bounding box instead of the entire
+  // 640x360 target canvas for every triangle. This keeps the affine math the
+  // same while dramatically reducing texture sampling and canvas work.
+  const pad = 1;
+  const sx = Math.max(0, Math.floor(Math.min(x0, x1, x2) - pad));
+  const sy = Math.max(0, Math.floor(Math.min(y0, y1, y2) - pad));
+  const ex = Math.min(image.width, Math.ceil(Math.max(x0, x1, x2) + pad));
+  const ey = Math.min(image.height, Math.ceil(Math.max(y0, y1, y2) + pad));
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw < 1 || sh < 1) return;
+
+  // After cropping the source, translate the affine transform so local
+  // crop coordinates still map to the original destination coordinates.
+  const e = u0 - a*x0 - c*y0 + a*sx + c*sy;
+  const f = v0 - b*x0 - d*y0 + b*sx + d*sy;
 
   ctx.save();
   ctx.beginPath();
@@ -471,7 +487,7 @@ function warpTriangleImage(ctx, image, src, dst) {
   ctx.closePath();
   ctx.clip();
   ctx.setTransform(a,b,c,d,e,f);
-  ctx.drawImage(image, 0, 0);
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, sw, sh);
   ctx.restore();
 }
 
