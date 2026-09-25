@@ -30,7 +30,7 @@ const state = {
   lastFrameAt: 0,
   bytes: 0,
   processedFrames: 0,
-  faceEngine: 'LANDMARK-STUB',
+  faceEngine: 'FRAME-DECODE',
   processingMs: 0,
   faceCount: 0,
   faceDetectionMs: 0,
@@ -266,8 +266,9 @@ async function processFrame(frame) {
   processingBusy = true;
   const t0 = performance.now();
   try {
-    // Primeiro estágio real: decodifica e normaliza o frame localmente.
-    // O detector/landmarks GPU entra aqui sem alterar o transporte do iPhone.
+    // Server-side processing currently validates the JPEG and reads its
+    // dimensions only. Face detection/compositing runs in the browser with
+    // Human.js; do not report this metadata pass as a deepfake operation.
     const meta = await sharp(frame).metadata();
     state.processedFrames++;
     state.processingMs = Number((performance.now() - t0).toFixed(2));
