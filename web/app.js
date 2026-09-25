@@ -559,16 +559,32 @@ function resetCompositorState(clearSource = false) {
   }
 }
 
-function updateSwapMask(cx, cy, edge) {
+function updateSwapMask(cx, cy, edge, faceW = edge, faceH = edge) {
   if (!swapMaskCtx) return;
   swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
   swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
-  const gradient = swapMaskCtx.createRadialGradient(cx, cy, edge * 0.28, cx, cy, edge * 0.62);
+
+  // Use an elliptical feather that follows the detected face proportions.
+  // The previous circular falloff could leave visible halos at the cheeks
+  // or fade the chin/forehead too aggressively on non-square faces.
+  const rx = Math.max(20, faceW * 0.58);
+  const ry = Math.max(20, faceH * 0.64);
+  const innerX = Math.max(1, rx * 0.72);
+  const innerY = Math.max(1, ry * 0.72);
+
+  swapMaskCtx.save();
+  swapMaskCtx.translate(cx, cy);
+  swapMaskCtx.scale(rx, ry);
+  const gradient = swapMaskCtx.createRadialGradient(0, 0, 0, 0, 0, 1);
+  const innerRatio = Math.min(innerX / rx, innerY / ry);
   gradient.addColorStop(0, 'rgba(255,255,255,1)');
-  gradient.addColorStop(0.82, 'rgba(255,255,255,0.96)');
+  gradient.addColorStop(innerRatio, 'rgba(255,255,255,0.98)');
   gradient.addColorStop(1, 'rgba(255,255,255,0)');
   swapMaskCtx.fillStyle = gradient;
-  swapMaskCtx.fillRect(0, 0, swapMask.width, swapMask.height);
+  swapMaskCtx.beginPath();
+  swapMaskCtx.arc(0, 0, 1, 0, Math.PI * 2);
+  swapMaskCtx.fill();
+  swapMaskCtx.restore();
 }
 
 function getMeshStep(count) {
@@ -667,7 +683,7 @@ function warpFace(points) {
 
   swapCtx.restore();
 
-  updateSwapMask(cx, cy, edge);
+  updateSwapMask(cx, cy, edge, b.w, b.h);
   swapCtx.globalCompositeOperation = 'destination-in';
   swapCtx.drawImage(swapMask, 0, 0);
   swapCtx.globalCompositeOperation = 'source-over';
