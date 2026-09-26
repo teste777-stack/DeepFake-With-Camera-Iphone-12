@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
-const sharp = require('sharp');
 const WebSocket = require('ws');
 const mdns = require('multicast-dns')();
 
@@ -162,7 +161,31 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('message', (raw, isBinary) => {
-    if (isBinary) return;
+    if (isBinary) {
+      if (!ws.isCamera) return;
+      const frame = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+      if (!frame.length) return;
+
+      latestMime = 'image/jpeg';
+      latestFrame = frame;
+      state.frames++;
+      state.lastFrameAt = Date.now();
+      state.bytes += frame.length;
+
+      if (Date.now() - lastFpsTick >= 1000) {
+        state.fps = state.frames - (state._lastFrames || 0);
+        state._lastFrames = state.frames;
+        lastFpsTick = Date.now();
+      }
+
+      for (const client of wss.clients) {
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(frame, { binary: true });
+        }
+      }
+      return;
+    }
+
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
@@ -198,7 +221,6 @@ wss.on('connection', (ws, req) => {
       if (!match) return;
       latestMime = match[1];
       latestFrame = Buffer.from(match[2], 'base64');
-      processFrame(latestFrame).catch(() => {});
       state.frames++;
       state.lastFrameAt = Date.now();
       state.bytes += latestFrame.length;
@@ -209,14 +231,10 @@ wss.on('connection', (ws, req) => {
         lastFpsTick = Date.now();
       }
 
-      // Broadcast the most recent frame only. Clients drop stale frames.
-      const payload = JSON.stringify({
-        type: 'remoteFrame',
-        mime: latestMime,
-        data: msg.data
-      });
       for (const client of wss.clients) {
-        if (client !== ws && client.readyState === WebSocket.OPEN) client.send(payload);
+        if (client !== ws && client.readyState === WebSocket.OPEN) {
+          client.send(latestFrame, { binary: true });
+        }
       }
     }
   });
@@ -263,21 +281,4 @@ setInterval(() => {
 }, 1000);
 
 
-let processingBusy = false;
-async function processFrame(frame) {
-  if (processingBusy) return;
-  processingBusy = true;
-  const t0 = performance.now();
-  try {
-    // Server-side processing currently validates the JPEG and reads its
-    // dimensions only. Face detection/compositing runs in the browser with
-    // Human.js; do not report this metadata pass as a deepfake operation.
-    const meta = await sharp(frame).metadata();
-    state.processedFrames++;
-    state.processingMs = Number((performance.now() - t0).toFixed(2));
-    state.frameWidth = meta.width || 0;
-    state.frameHeight = meta.height || 0;
-  } finally {
-    processingBusy = false;
-  }
-}
+// Live JPEGs stay compressed on the server. Face detection/compositing runs in the browser with Human.js.
