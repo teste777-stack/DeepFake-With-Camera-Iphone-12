@@ -1431,7 +1431,15 @@ async function startCamera() {
     stop.disabled = false;
     flip.disabled = false;
     setStatus('CAMERA + WSS', true);
-    if (!syntheticIdentity) await generateSyntheticFace(seedInput?.value || 184729);
+
+    // Start transport/capture immediately. Identity generation must never block
+    // the camera button after getUserMedia succeeds.
+    const identityPromise = syntheticIdentity
+      ? Promise.resolve()
+      : generateSyntheticFace(seedInput?.value || 184729).catch(err => {
+          console.error('[IDENTITY]', err);
+          identityStatus.textContent = 'IDENTITY ERROR / CAMERA STILL LIVE';
+        });
 
     // Start local capture immediately after getUserMedia succeeds. The camera
     // preview/compositor must not wait for WSS; WSS is only transport.
@@ -1445,6 +1453,9 @@ async function startCamera() {
     video.addEventListener('loadeddata', ensurePump, { once: true });
     video.addEventListener('playing', ensurePump, { once: true });
     startFramePump();
+
+    // Do not await identity generation here: the camera must remain responsive.
+    void identityPromise;
 
     if (ws?.readyState === WebSocket.OPEN) {
       cameraStartPending = false;
