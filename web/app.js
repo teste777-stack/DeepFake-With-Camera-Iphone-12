@@ -1307,7 +1307,6 @@ async function startCamera() {
     flip.disabled = false;
     setStatus('CAMERA + WSS', true);
     if (!syntheticIdentity) await generateSyntheticFace(seedInput?.value || 184729);
-    ws?.send(JSON.stringify({ type: 'startRemoteCam' }));
 
     cameraStartPending = true;
     if (ws?.readyState === WebSocket.OPEN) {
