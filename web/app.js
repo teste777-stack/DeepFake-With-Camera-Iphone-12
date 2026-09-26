@@ -60,6 +60,9 @@ const testImageButton = document.getElementById('testImageButton');
 const clearTestImageButton = document.getElementById('clearTestImage');
 const testImageStatus = document.getElementById('testImageStatus');
 let testImageActive = false;
+let testLoopTimer = null;
+let testSourceImage = null;
+let testLoopPhase = 0;
 
 function seededRandom(seed) {
   let x = (Number(seed) >>> 0) || 1;
@@ -220,6 +223,7 @@ async function generateSyntheticFace(seed) {
 async function loadTestImage(file) {
   if (!file || !file.type.startsWith('image/')) return;
   try {
+    stopTestImageLoop();
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
@@ -237,6 +241,8 @@ async function loadTestImage(file) {
     const scale = Math.min(remote.width / image.naturalWidth, remote.height / image.naturalHeight);
     const drawW = Math.max(1, Math.round(image.naturalWidth * scale));
     const drawH = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    testSourceImage = image;
 
     sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
     sourceFrameCtx.fillStyle = '#000';
@@ -273,6 +279,7 @@ async function loadTestImage(file) {
       await initFaceEngine();
     }
 
+    startTestImageLoop();
     await detectFaceFrame();
     const points = latestFaces[0] ? extractLandmarks(latestFaces[0]) : [];
     const hasTrack = points.length >= 10;
@@ -302,7 +309,62 @@ testImageInput?.addEventListener('change', () => {
   loadTestImage(file);
 });
 
+function drawTestLoopFrame() {
+  if (!testImageActive || !testSourceImage) return;
+
+  const w = sourceFrame.width;
+  const h = sourceFrame.height;
+  const image = testSourceImage;
+  const fit = Math.min(w / image.naturalWidth, h / image.naturalHeight);
+  const baseW = image.naturalWidth * fit;
+  const baseH = image.naturalHeight * fit;
+
+  // Gentle breathing/zoom movement turns the still photo into a deterministic
+  // loop while keeping the face stable enough for tracking tests.
+  testLoopPhase += 0.045;
+  const zoom = 1 + Math.sin(testLoopPhase) * 0.018;
+  const drawW = baseW * zoom;
+  const drawH = baseH * zoom;
+  const panX = Math.sin(testLoopPhase * 0.73) * 5;
+  const panY = Math.cos(testLoopPhase * 0.61) * 3;
+
+  sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
+  sourceFrameCtx.fillStyle = '#000';
+  sourceFrameCtx.fillRect(0, 0, w, h);
+  sourceFrameCtx.drawImage(
+    image,
+    (w - drawW) * 0.5 + panX,
+    (h - drawH) * 0.5 + panY,
+    drawW,
+    drawH
+  );
+
+  detectFaceFrame();
+}
+
+function startTestImageLoop() {
+  stopTestImageLoop();
+  if (!testImageActive || !testSourceImage) return;
+  testLoopPhase = 0;
+  testLoopTimer = setInterval(drawTestLoopFrame, 50);
+  drawTestLoopFrame();
+  testImageStatus.textContent = 'PHOTO LOOP / FACE TRACKING...';
+  engineStatus.textContent = 'TEST LOOP / FACE ENGINE';
+  enginePipe.textContent = 'LOOP FRAME BUFFER';
+}
+
+function stopTestImageLoop() {
+  if (testLoopTimer) {
+    clearInterval(testLoopTimer);
+    testLoopTimer = null;
+  }
+}
+
 clearTestImageButton?.addEventListener('click', () => {
+  stopTestImageLoop();
+  testSourceImage = null;
+  stopTestImageLoop();
+  testSourceImage = null;
   testImageActive = false;
   testImageInput.value = '';
   testImageButton.disabled = false;
