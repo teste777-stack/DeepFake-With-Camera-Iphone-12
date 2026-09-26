@@ -275,15 +275,19 @@ async function loadTestImage(file) {
 
     await detectFaceFrame();
     const points = latestFaces[0] ? extractLandmarks(latestFaces[0]) : [];
-    if (points.length >= 10) {
-      testImageStatus.textContent = 'FACE DETECTED / ' + points.length + ' POINTS';
+    const hasTrack = points.length >= 10;
+    if (hasTrack) {
+      testImageStatus.textContent = 'FACE DETECTED / ' + points.length + ' POINTS / SWAP LIVE';
       engineStatus.textContent = identityReady ? 'TEST IMAGE / FACE SWAP' : 'TEST IMAGE / FACE DETECTED';
       enginePipe.textContent = identityReady ? 'TEST TRACK + COMPOSITE' : 'TEST FACE DETECTOR';
-      meshPipe.textContent = identityReady ? 'TEST IMAGE / READY FOR SWAP' : 'TEST IMAGE / FACE DETECTED';
+      meshPipe.textContent = identityReady ? 'TEST IMAGE / TRACK READY' : 'TEST IMAGE / FACE DETECTED';
     } else {
-      testImageStatus.textContent = 'IMAGE LOADED / NO USABLE FACE';
-      engineStatus.textContent = 'TEST IMAGE / NO FACE';
-      meshPipe.textContent = 'TEST IMAGE / NO TRACK';
+      testImageStatus.textContent = latestFaces.length
+        ? 'FACE BOX FOUND / LANDMARKS UNAVAILABLE'
+        : 'IMAGE LOADED / NO FACE';
+      engineStatus.textContent = latestFaces.length ? 'TEST IMAGE / BOX TRACK' : 'TEST IMAGE / NO FACE';
+      enginePipe.textContent = latestFaces.length ? 'TEST BOX TRACK' : 'TEST FACE DETECTOR';
+      meshPipe.textContent = latestFaces.length ? 'TEST IMAGE / BOX FALLBACK' : 'TEST IMAGE / NO TRACK';
     }
   } catch (err) {
     console.error('[TEST IMAGE]', err);
@@ -373,10 +377,22 @@ function extractLandmarks(face) {
   const frameW = Math.max(1, sourceFrame.width || remote.width);
   const frameH = Math.max(1, sourceFrame.height || remote.height);
   const mesh = Array.isArray(face?.mesh) ? face.mesh : [];
-  let points = mesh.map(p => Array.isArray(p)
-    ? [Number(p[0]), Number(p[1])]
-    : [Number(p?.x), Number(p?.y)])
-    .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  let points = [];
+
+  // Human normally returns mesh points as [x, y, z], but different model
+  // builds can expose them as flat [x, y, x, y, ...] arrays or point objects.
+  if (mesh.length && typeof mesh[0] === 'number') {
+    for (let n = 0; n + 1 < mesh.length; n += 2) {
+      const x = Number(mesh[n]);
+      const y = Number(mesh[n + 1]);
+      if (Number.isFinite(x) && Number.isFinite(y)) points.push([x, y]);
+    }
+  } else {
+    points = mesh.map(p => Array.isArray(p)
+      ? [Number(p[0]), Number(p[1])]
+      : [Number(p?.x), Number(p?.y)])
+      .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  }
 
   // Human may expose mesh coordinates normalized to 0..1. The compositor works
   // in source-canvas pixels, so convert normalized coordinates before tracking.
@@ -395,7 +411,14 @@ function extractLandmarks(face) {
   // Human can keep a detector result even when FaceMesh rejects the sample.
   // Use the detected face box as a stable fallback so the synthetic identity
   // can still be positioned while the detailed mesh recovers.
-  const box = Array.isArray(face?.box) ? face.box : null;
+  let box = Array.isArray(face?.box) ? face.box : null;
+  if (!box && face?.box && typeof face.box === 'object') {
+    const bx = Number(face.box.x);
+    const by = Number(face.box.y);
+    const bw = Number(face.box.width ?? face.box.w);
+    const bh = Number(face.box.height ?? face.box.h);
+    if ([bx, by, bw, bh].every(Number.isFinite)) box = [bx, by, bw, bh];
+  }
   if (!box || box.length < 4) return [];
   let [x, y, w, h] = box.map(Number);
   if (![x, y, w, h].every(Number.isFinite)) return [];
@@ -1023,7 +1046,12 @@ function drawCompositor() {
     ? smoothLandmarks(trackedPoints)
     : ((nowTracking - lastValidFaceAt) <= faceTrackingGraceMs ? smoothedLandmarks : []);
   if (points.length >= 10 && warpFace(points)) {
-    if (syntheticIdentity) {
+    if (testImageActive) {
+      testImageStatus.textContent = 'FACE SWAP ACTIVE / ' + points.length + ' POINTS';
+      meshPipe.textContent = 'TEST IMAGE / SWAP ACTIVE';
+      engineStatus.textContent = 'TEST IMAGE / FACE SWAP ACTIVE';
+      enginePipe.textContent = 'TEST TRACK + COMPOSITE';
+    } else if (syntheticIdentity) {
       meshPipe.textContent = 'FACE SWAP ACTIVE / SYNTHETIC IDENTITY';
       engineStatus.textContent = 'FACE SWAP ACTIVE';
       enginePipe.textContent = 'TRACK + COMPOSITE';
