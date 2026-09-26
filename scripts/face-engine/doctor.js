@@ -34,7 +34,8 @@ console.log('  Python\n  --------\n' + info.text.trim());
 
 const deps = runPython(`
 import importlib
-mods = ["numpy", "onnx", "onnxruntime", "insightface", "cv2", "fastapi", "uvicorn"]
+mods = ["numpy", "onnx", "onnxruntime", "insightface", "cv2", "fastapi", "uvicorn",
+        "nvidia.cuda_runtime", "nvidia.cublas", "nvidia.cudnn"]
 for name in mods:
     try:
         m = importlib.import_module(name)
@@ -44,43 +45,87 @@ for name in mods:
 `);
 console.log('\n  Pacotes\n  --------\n' + deps.text.trim());
 
-const modelForPython = modelPath.replace(/\\/g, '\\\\');
 const ortCode = `
-import os, site
+import os
+import site
+import sys
+import tempfile
 from pathlib import Path
+
+dlls = []
 for base in site.getsitepackages():
-    n = Path(base) / "nvidia"
-    for folder in [n/"cudnn"/"bin", n/"cublas"/"bin", n/"cuda_runtime"/"bin"]:
+    nvidia = Path(base) / "nvidia"
+    for folder in [nvidia/"cudnn"/"bin", nvidia/"cublas"/"bin", nvidia/"cuda_runtime"/"bin"]:
         if folder.is_dir():
-            try: os.add_dll_directory(str(folder))
-            except Exception: pass
+            dlls.append(folder)
+            try:
+                os.add_dll_directory(str(folder))
+            except Exception:
+                pass
             os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
-import onnxruntime as ort
-print("PROVIDERS=" + ",".join(ort.get_available_providers()))
-model = MODEL_PATH_PLACEHOLDER
-if not os.path.exists(model):
-    print("MODEL=ABSENT")
-else:
-    print("MODEL=PRESENT")
-    cpu_error = None
+
+print("NVIDIA_DLL_DIRS=" + "|".join(str(p) for p in dlls))
+for folder in dlls:
+    names = sorted(p.name for p in folder.glob("*.dll"))
+    print("DLLS_" + folder.name.upper() + "=" + ",".join(names[:40]))
+
+try:
+    import onnxruntime as ort
+    providers = ort.get_available_providers()
+    print("PROVIDERS=" + ",".join(providers))
+except Exception as e:
+    print("ORT_IMPORT_ERROR=" + repr(e))
+    sys.exit(0)
+
+cuda_available = "CUDAExecutionProvider" in providers
+print("CUDA_PROVIDER_AVAILABLE=" + str(cuda_available))
+
+if cuda_available:
     try:
-        ort.InferenceSession(model, providers=["CPUExecutionProvider"])
-        print("CPU_SESSION=OK")
-    except Exception as e:
-        cpu_error = str(e)
-        print("CPU_SESSION=ERROR:" + cpu_error)
-    if cpu_error is None and "CUDAExecutionProvider" in ort.get_available_providers():
+        import onnx
+        from onnx import helper, TensorProto
+        model = helper.make_model(
+            helper.make_graph(
+                [helper.make_node("Identity", ["input"], ["output"])],
+                "xlocal_cuda_probe",
+                [helper.make_tensor_value_info("input", TensorProto.FLOAT, [1, 4])],
+                [helper.make_tensor_value_info("output", TensorProto.FLOAT, [1, 4])]
+            ),
+            opset_imports=[helper.make_opsetid("", 13)]
+        )
+        model.ir_version = 10
+        probe = Path(tempfile.gettempdir()) / "xlocal_cuda_probe.onnx"
+        onnx.save(model, str(probe))
+
         try:
-            s = ort.InferenceSession(model, providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+            session = ort.InferenceSession(
+                str(probe),
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+            )
             print("CUDA_SESSION=OK")
-            print("ACTIVE_PROVIDERS=" + ",".join(s.get_providers()))
+            print("ACTIVE_PROVIDERS=" + ",".join(session.get_providers()))
         except Exception as e:
-            print("CUDA_SESSION=ERROR:" + str(e))
-`.replace("MODEL_PATH_PLACEHOLDER", JSON.stringify(modelForPython));
+            print("CUDA_SESSION=ERROR:" + repr(e))
+        finally:
+            try:
+                probe.unlink()
+            except Exception:
+                pass
+    except Exception as e:
+        print("CUDA_PROBE_BUILD_ERROR=" + repr(e))
+else:
+    print("CUDA_SESSION=SKIPPED")
+
+try:
+    print("ORT_VERSION=" + ort.__version__)
+except Exception:
+    pass
+`;
 
 const ort = runPython(ortCode);
 console.log('\n  ONNX Runtime / CUDA\n  -------------------\n' + ort.text.trim());
 
 console.log('\n  Modelos\n  --------');
 console.log('  inswapper_128.onnx:', fs.existsSync(modelPath) ? 'PRESENTE' : 'AUSENTE');
-console.log('  buffalo_l: baixado pelo InsightFace no primeiro FaceAnalysis se necessário.\n');
+console.log('  buffalo_l: baixado pelo InsightFace no primeiro FaceAnalysis se necessário.');
+console.log('\n  Nota: erro de IR/opset do inswapper é separado do teste CUDA acima.');
