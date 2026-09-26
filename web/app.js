@@ -67,6 +67,10 @@ let neuralSwapEnabled = false;
 let neuralSourceReady = false;
 let neuralBusy = false;
 let neuralLastAt = 0;
+const neuralResultCanvas = document.createElement('canvas');
+neuralResultCanvas.width = remote.width;
+neuralResultCanvas.height = remote.height;
+const neuralResultCtx = neuralResultCanvas.getContext('2d', { alpha: false });
 let neuralSourceInput = document.getElementById('neuralSourceInput');
 let neuralSourceButton = document.getElementById('neuralSourceButton');
 let neuralSwapButton = document.getElementById('neuralSwapButton');
@@ -294,7 +298,10 @@ async function requestNeuralSwap() {
     const bitmap = await createImageBitmap(resultBlob);
     compositorCtx.setTransform(1, 0, 0, 1, 0, 0);
     compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
-    compositorCtx.drawImage(bitmap, 0, 0, compositor.width, compositor.height);
+    neuralResultCtx.setTransform(1, 0, 0, 1, 0, 0);
+    neuralResultCtx.clearRect(0, 0, neuralResultCanvas.width, neuralResultCanvas.height);
+    neuralResultCtx.drawImage(bitmap, 0, 0, neuralResultCanvas.width, neuralResultCanvas.height);
+    compositorCtx.drawImage(neuralResultCanvas, 0, 0, compositor.width, compositor.height);
     bitmap.close();
     const elapsed = Math.round(performance.now() - started);
     processMs.textContent = elapsed + ' ms';
@@ -1212,6 +1219,15 @@ function drawCompositor() {
   remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
   compositorCtx.drawImage(sourceFrame, 0, 0, compositor.width, compositor.height);
 
+  if (neuralSwapEnabled && neuralSourceReady) {
+    remoteCtx.drawImage(neuralResultCanvas, 0, 0, remote.width, remote.height);
+    engineStatus.textContent = 'NEURAL FACE SWAP ACTIVE';
+    enginePipe.textContent = 'GPU NEURAL SWAP';
+    meshPipe.textContent = 'NEURAL SWAP / TEMPORAL';
+    requestAnimationFrame(drawCompositor);
+    return;
+  }
+
   const face = latestFaces[0];
   const trackedPoints = face ? extractLandmarks(face) : [];
   const nowTracking = performance.now();
@@ -1372,6 +1388,7 @@ async function pumpRemoteFrame() {
     // binary transport optimization removed the old detection call, leaving
     // FACES at zero even though frames were arriving correctly.
     detectFaceFrame();
+    void requestNeuralSwap();
   } catch {
     // Ignore a malformed/stale frame and keep the live stream running.
   } finally {
