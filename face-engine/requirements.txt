@@ -1,7 +1,8 @@
 fastapi>=0.115,<1
 uvicorn>=0.34,<1
-numpy>=1.26,<3
+numpy>=1.26,<2
 opencv-python>=4.10,<5
 insightface>=0.7.3
 onnxruntime-gpu>=1.20,<2
 protobuf>=6.31.1,<7
+ml-dtypes>=0.5.1,<1
