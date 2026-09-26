@@ -893,9 +893,20 @@ function estimateFaceTilt(points) {
   return Math.max(-0.55, Math.min(0.55, tilt));
 }
 
+function setCompositorDebug(message) {
+  const value = String(message || '');
+  if (testImageStatus) testImageStatus.textContent = 'DEBUG / ' + value;
+  if (engineStatus && testImageActive) engineStatus.textContent = 'COMPOSITOR / ' + value;
+  console.debug('[COMPOSITOR]', value);
+}
+
 function warpFace(points) {
   const b = faceBounds(points);
-  if (!b || b.w < 30 || b.h < 30) return false;
+  if (!b || b.w < 30 || b.h < 30) {
+    setCompositorDebug('FAIL: FACE BOUNDS');
+    return false;
+  }
+  setCompositorDebug('FACE BOUNDS ' + Math.round(b.w) + 'x' + Math.round(b.h));
 
   const hasSynthetic = !!syntheticIdentity;
   const hasManualTarget = !hasSynthetic &&
@@ -908,7 +919,11 @@ function warpFace(points) {
   // requiring a generated mesh here can prevent the compositor from ever
   // reaching the visible swap path when a still-frame diagnostic has only a
   // detector/landmark result.
-  if (!hasSynthetic && !hasManualTarget) return false;
+  if (!hasSynthetic && !hasManualTarget) {
+    setCompositorDebug('FAIL: NO TARGET');
+    return false;
+  }
+  if (testImageActive && hasSynthetic) setCompositorDebug('TARGET READY');
 
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
   compositorCtx.drawImage(sourceFrame, 0, 0);
@@ -938,6 +953,7 @@ function warpFace(points) {
   swapCtx.rotate(faceTilt);
 
   if (hasSynthetic && targetCanvas.width && targetCanvas.height) {
+    if (testImageActive) setCompositorDebug('DRAW SYNTHETIC ' + targetCanvas.width + 'x' + targetCanvas.height);
     // Synthetic identities are rendered directly from their generated pixels.
     // Do not require Human.js to detect the procedural face: Human.js only
     // needs to track the real face that will receive the generated identity.
@@ -993,6 +1009,7 @@ function warpFace(points) {
   }
 
   swapCtx.restore();
+  if (testImageActive) setCompositorDebug('SWAP LAYER DRAWN');
 
   // Synthetic identities use a stable oval mask; manual references keep the
   // tracked landmark hull. This prevents a procedural face from disappearing
@@ -1019,6 +1036,7 @@ function warpFace(points) {
     swapCtx.globalCompositeOperation = 'source-over';
   }
 
+  if (testImageActive) setCompositorDebug('COMPOSITOR DRAW');
   compositorCtx.save();
   compositorCtx.globalAlpha = 0.98;
   compositorCtx.drawImage(swapLayer, 0, 0);
@@ -1052,6 +1070,7 @@ function drawCompositor() {
   if (points.length >= 10 && warpFace(points)) {
     if (testImageActive) {
       testImageStatus.textContent = 'FACE SWAP ACTIVE / ' + points.length + ' POINTS';
+      console.debug('[COMPOSITOR] ACTIVE points=', points.length, 'synthetic=', !!syntheticIdentity);
       meshPipe.textContent = 'TEST IMAGE / SWAP ACTIVE';
       engineStatus.textContent = 'TEST IMAGE / FACE SWAP ACTIVE';
       enginePipe.textContent = 'TEST TRACK + COMPOSITE';
@@ -1067,6 +1086,7 @@ function drawCompositor() {
     remoteCtx.drawImage(sourceFrame, 0, 0);
     if (performance.now() - lastValidFaceAt > faceTrackingGraceMs) smoothedLandmarks = [];
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
+    if (testImageActive && latestFaces.length) setCompositorDebug('FAIL: WARP RETURNED FALSE');
   }
 }
 requestAnimationFrame(drawCompositor);
