@@ -813,7 +813,7 @@ function warpFace(points) {
 
     for (const tri of targetMeshTopology) {
       const src = tri.map(i => targetMeshPoints[i]);
-      const dst = liveMeshPoints[i];
+      const dst = tri.map(i => liveMeshPoints[i]);
       warpTriangleImage(swapCtx, targetCanvas, src, dst);
     }
   } else {
