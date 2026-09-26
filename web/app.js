@@ -317,11 +317,23 @@ clearTestImageButton?.addEventListener('click', () => {
   meshPipe.textContent = 'NEXT';
 });
 
-generateFaceButton?.addEventListener('click', () => generateSyntheticFace(seedInput.value));
-randomFaceButton?.addEventListener('click', () => {
+generateFaceButton?.addEventListener('click', async () => {
+  await generateSyntheticFace(seedInput.value);
+  // Generating an identity is also the explicit user gesture that can start
+  // the iPhone camera. Without a live source frame there is nothing to track
+  // or replace, so keep the pipeline from stopping at "GENERATED IDENTITY".
+  if (!stream && !testImageActive) {
+    await startCamera();
+  }
+});
+
+randomFaceButton?.addEventListener('click', async () => {
   const seed = Math.floor(Math.random()*2147483647);
   seedInput.value = String(seed);
-  generateSyntheticFace(seed);
+  await generateSyntheticFace(seed);
+  if (!stream && !testImageActive) {
+    await startCamera();
+  }
 });
 
 
@@ -1198,7 +1210,13 @@ function startFramePump() {
     // compositor as well, otherwise the same iPhone page can stay at
     // FRAMES 0 / FACES 0 forever even while WSS is healthy.
     sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
+    // Keep the render loop fed immediately by the local iPhone frame. The
+    // WebSocket is transport only; the compositor must never depend on the
+    // server echoing the frame back to the same camera client.
     scheduleLocalDetection();
+    if (latestFaces.length) {
+      drawCompositor();
+    }
 
     ws.send(JSON.stringify({
       type: 'webcamFrame',
