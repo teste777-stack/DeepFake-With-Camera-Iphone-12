@@ -7,7 +7,9 @@
     "start": "electron .",
     "start:server": "node server/index.js",
     "cert:generate": "node scripts/generate-cert.js",
-    "face-engine:install": "python -m pip install -r face-engine/requirements.txt"
+    "face-engine:setup": "node scripts/face-engine/setup.js",
+    "face-engine:install": "node scripts/face-engine/setup.js --install",
+    "face-engine:doctor": "node scripts/face-engine/doctor.js"
   },
   "dependencies": {
     "express": "^5.1.0",
