@@ -305,7 +305,16 @@ function startFaceEngine() {
     console.warn('[FACE ENGINE] engine.py não encontrado');
     return;
   }
-  const python = process.env.PYTHON_EXECUTABLE || 'python';
+  const projectRoot = path.join(__dirname, '..');
+  const venvPython = process.platform === 'win32'
+    ? path.join(projectRoot, 'face-engine', '.venv', 'Scripts', 'python.exe')
+    : path.join(projectRoot, 'face-engine', '.venv', 'bin', 'python');
+  const python = process.env.PYTHON_EXECUTABLE
+    || (fs.existsSync(venvPython) ? venvPython : 'python');
+
+  if (!fs.existsSync(venvPython) && !process.env.PYTHON_EXECUTABLE) {
+    console.warn('[FACE ENGINE] .venv não encontrado. Rode: npm run face-engine:setup');
+  }
   faceEngineProcess = spawn(python, [script], {
     cwd: path.join(__dirname, '..'),
     windowsHide: true,
