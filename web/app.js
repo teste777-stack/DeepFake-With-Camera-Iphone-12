@@ -1198,45 +1198,51 @@ function setStatus(text, on = false) {
 
 function startFramePump() {
   clearInterval(frameTimer);
-  frameTimer = setInterval(() => {
-    // The camera/compositor must run independently from WSS transport.
-    // WSS is only needed to publish frames to other clients.
-    if (!stream) return;
+  frameCount = 0;
+  lastFps = performance.now();
 
+  // Local capture is authoritative. WSS is only an optional transport layer.
+  // Never gate this loop on WebSocket state: the compositor must keep running
+  // even while WSS is reconnecting or temporarily unavailable.
+  frameTimer = setInterval(() => {
+    if (!stream || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+
+    const startedAt = performance.now();
     const wsOpen = ws?.readyState === WebSocket.OPEN;
     const qSize = wsOpen ? (ws.bufferedAmount || 0) : 0;
     if (wsOpen && qSize > 2500000) return;
-    const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // The WebSocket server broadcasts remoteFrame to other clients, not back
-    // to the camera sender. Feed the local camera frame directly into the
-    // compositor as well, otherwise the same iPhone page can stay at
-    // FRAMES 0 / FACES 0 forever even while WSS is healthy.
-    sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
-    // Keep the render loop fed immediately by the local iPhone frame. The
-    // WebSocket is transport only; the compositor must never depend on the
-    // server echoing the frame back to the same camera client.
-    scheduleLocalDetection();
-    if (latestFaces.length) {
-      drawCompositor();
-    }
+    try {
+      if (!canvas.width || !canvas.height) return;
 
-    if (wsOpen) {
-      ws.send(JSON.stringify({
-        type: 'webcamFrame',
-        data: canvas.toDataURL('image/jpeg', quality)
-      }));
-    }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
 
-    // Count every local camera frame, even when WSS is temporarily offline.
-    frameCount++;
-    const now = performance.now();
-    if (now - lastFps > 1000) {
-      remoteFrames.textContent = String(frameCount);
-      remoteFps.textContent = Math.round(frameCount * 1000 / (now - lastFps)) + ' FPS';
-      frameCount = 0;
-      lastFps = now;
+      // Detection and compositor run from the local frame, not from the
+      // server echo. The compositor render loop itself is continuous.
+      scheduleLocalDetection();
+
+      if (wsOpen) {
+        const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
+        ws.send(JSON.stringify({
+          type: 'webcamFrame',
+          data: canvas.toDataURL('image/jpeg', quality)
+        }));
+      }
+    } catch (err) {
+      // Keep the interval alive if one browser frame is temporarily invalid.
+      console.warn('[CAMERA FRAME]', err?.name || 'ERROR', err?.message || err);
+    } finally {
+      // Count captured frames independently from WSS and compositor state.
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFps >= 1000) {
+        remoteFrames.textContent = String(frameCount);
+        remoteFps.textContent = Math.round(frameCount * 1000 / (now - lastFps)) + ' FPS';
+        processMs.textContent = Math.max(0, Math.round(performance.now() - startedAt)) + ' ms';
+        frameCount = 0;
+        lastFps = now;
+      }
     }
   }, 50);
 }
@@ -1257,7 +1263,7 @@ function connect() {
     if (cameraStartPending && stream) {
       cameraStartPending = false;
       ws.send(JSON.stringify({ type: 'startRemoteCam' }));
-      startFramePump();
+      // startFramePump() is already running independently from WSS.
       setStatus('CAMERA + WSS', true);
     }
   };
@@ -1350,11 +1356,14 @@ async function startCamera() {
     setStatus('CAMERA + WSS', true);
     if (!syntheticIdentity) await generateSyntheticFace(seedInput?.value || 184729);
 
+    // Start local capture immediately after getUserMedia succeeds. The camera
+    // preview/compositor must not wait for WSS; WSS is only transport.
     cameraStartPending = true;
+    startFramePump();
+
     if (ws?.readyState === WebSocket.OPEN) {
       cameraStartPending = false;
       ws.send(JSON.stringify({ type: 'startRemoteCam' }));
-      startFramePump();
     }
   } catch (err) {
     setStatus('ERRO CAMERA');
