@@ -1199,9 +1199,13 @@ function setStatus(text, on = false) {
 function startFramePump() {
   clearInterval(frameTimer);
   frameTimer = setInterval(() => {
-    if (!stream || !ws || ws.readyState !== WebSocket.OPEN) return;
-    const qSize = ws.bufferedAmount || 0;
-    if (qSize > 2500000) return;
+    // The camera/compositor must run independently from WSS transport.
+    // WSS is only needed to publish frames to other clients.
+    if (!stream) return;
+
+    const wsOpen = ws?.readyState === WebSocket.OPEN;
+    const qSize = wsOpen ? (ws.bufferedAmount || 0) : 0;
+    if (wsOpen && qSize > 2500000) return;
     const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -1218,10 +1222,14 @@ function startFramePump() {
       drawCompositor();
     }
 
-    ws.send(JSON.stringify({
-      type: 'webcamFrame',
-      data: canvas.toDataURL('image/jpeg', quality)
-    }));
+    if (wsOpen) {
+      ws.send(JSON.stringify({
+        type: 'webcamFrame',
+        data: canvas.toDataURL('image/jpeg', quality)
+      }));
+    }
+
+    // Count every local camera frame, even when WSS is temporarily offline.
     frameCount++;
     const now = performance.now();
     if (now - lastFps > 1000) {
