@@ -220,30 +220,59 @@ async function generateSyntheticFace(seed) {
 async function loadTestImage(file) {
   if (!file || !file.type.startsWith('image/')) return;
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(remote.width / bitmap.width, remote.height / bitmap.height);
-    const drawW = Math.max(1, Math.round(bitmap.width * scale));
-    const drawH = Math.max(1, Math.round(bitmap.height * scale));
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error('FILE READ ERROR'));
+      reader.readAsDataURL(file);
+    });
+
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('IMAGE DECODE ERROR'));
+      img.src = dataUrl;
+    });
+
+    const scale = Math.min(remote.width / image.naturalWidth, remote.height / image.naturalHeight);
+    const drawW = Math.max(1, Math.round(image.naturalWidth * scale));
+    const drawH = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
     sourceFrameCtx.fillStyle = '#000';
     sourceFrameCtx.fillRect(0, 0, sourceFrame.width, sourceFrame.height);
-    sourceFrameCtx.drawImage(bitmap, (sourceFrame.width - drawW) * 0.5, (sourceFrame.height - drawH) * 0.5, drawW, drawH);
-    bitmap.close();
+    sourceFrameCtx.drawImage(
+      image,
+      Math.round((sourceFrame.width - drawW) * 0.5),
+      Math.round((sourceFrame.height - drawH) * 0.5),
+      drawW,
+      drawH
+    );
+
+    // Show the uploaded image immediately, even before Human.js finishes.
+    remoteCtx.setTransform(1, 0, 0, 1, 0, 0);
+    remoteCtx.clearRect(0, 0, remote.width, remote.height);
+    remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
 
     testImageActive = true;
     testImageButton.disabled = true;
     clearTestImageButton.disabled = false;
     start.disabled = true;
     flip.disabled = true;
-    testImageStatus.textContent = 'ANALYZING IMAGE...';
+    testImageStatus.textContent = 'IMAGE LOADED / ANALYZING...';
     source.textContent = file.name;
-    resolution.textContent = sourceFrame.width + ' × ' + sourceFrame.height + ' / TEST IMAGE';
+    resolution.textContent = image.naturalWidth + ' × ' + image.naturalHeight + ' / TEST IMAGE';
     placeholder.style.display = 'none';
     resetCompositorState(false);
 
+    // resetCompositorState(false) intentionally keeps the uploaded source.
+    remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
+
     if (!humanReady) {
-      testImageStatus.textContent = 'WAITING FACE ENGINE...';
+      testImageStatus.textContent = 'IMAGE LOADED / LOADING FACE...';
       await initFaceEngine();
     }
+
     await detectFaceFrame();
     const points = latestFaces[0] ? extractLandmarks(latestFaces[0]) : [];
     if (points.length >= 10) {
@@ -252,12 +281,13 @@ async function loadTestImage(file) {
       enginePipe.textContent = identityReady ? 'TEST TRACK + COMPOSITE' : 'TEST FACE DETECTOR';
       meshPipe.textContent = identityReady ? 'TEST IMAGE / READY FOR SWAP' : 'TEST IMAGE / FACE DETECTED';
     } else {
-      testImageStatus.textContent = 'NO USABLE FACE DETECTED';
+      testImageStatus.textContent = 'IMAGE LOADED / NO USABLE FACE';
+      engineStatus.textContent = 'TEST IMAGE / NO FACE';
       meshPipe.textContent = 'TEST IMAGE / NO TRACK';
     }
   } catch (err) {
-    console.error(err);
-    testImageStatus.textContent = 'IMAGE ERROR';
+    console.error('[TEST IMAGE]', err);
+    testImageStatus.textContent = 'IMAGE ERROR / ' + (err?.message || 'UNKNOWN');
     engineStatus.textContent = 'TEST IMAGE ERROR';
   }
 }
