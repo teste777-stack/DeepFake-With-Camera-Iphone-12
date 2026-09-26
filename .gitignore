@@ -3,3 +3,7 @@ certs/*.pem
 certs/*.key
 .DS_Store
 npm-debug.log*
+models/
+face-engine/.venv/
+__pycache__/
+*.pyc
