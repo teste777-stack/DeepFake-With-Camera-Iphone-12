@@ -766,7 +766,46 @@ function warpFace(points) {
   swapCtx.translate(cx, cy);
   swapCtx.rotate(faceTilt);
 
-  if (meshReady) {
+  if (hasSynthetic && targetCanvas.width && targetCanvas.height) {
+    // Synthetic identities are rendered directly from their generated pixels.
+    // Do not require Human.js to detect the procedural face: Human.js only
+    // needs to track the real face that will receive the generated identity.
+    const targetW = syntheticIdentity?.geometry?.faceW || Math.max(120, b.w);
+    const targetH = syntheticIdentity?.geometry?.faceH || Math.max(170, b.h);
+    const drawW = b.w * 1.18;
+    const drawH = b.h * 1.30;
+
+    // A subtle inner shadow makes the generated silhouette read as a face
+    // instead of a flat sticker while preserving the generated skin details.
+    swapCtx.save();
+    swapCtx.beginPath();
+    swapCtx.ellipse(0, 0, drawW * 0.49, drawH * 0.49, 0, 0, Math.PI * 2);
+    swapCtx.clip();
+
+    swapCtx.drawImage(
+      targetCanvas,
+      syntheticIdentity?.geometry?.cx - targetW * 0.5,
+      syntheticIdentity?.geometry?.cy - targetH * 0.5,
+      targetW,
+      targetH,
+      -drawW * 0.5,
+      -drawH * 0.5,
+      drawW,
+      drawH
+    );
+
+    const shade = swapCtx.createRadialGradient(
+      -drawW * 0.16, -drawH * 0.20, drawW * 0.04,
+      0, 0, drawW * 0.72
+    );
+    shade.addColorStop(0, 'rgba(255,255,255,0.08)');
+    shade.addColorStop(0.62, 'rgba(0,0,0,0)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.16)');
+    swapCtx.fillStyle = shade;
+    swapCtx.fillRect(-drawW * 0.5, -drawH * 0.5, drawW, drawH);
+    swapCtx.restore();
+  } else if (meshReady) {
+    // Manual reference images keep the landmark/Delaunay warp path.
     swapCtx.translate(-cx, -cy);
     swapCtx.beginPath();
     swapCtx.ellipse(cx, cy, b.w * 0.58, b.h * 0.64, 0, 0, Math.PI * 2);
@@ -774,27 +813,9 @@ function warpFace(points) {
 
     for (const tri of targetMeshTopology) {
       const src = tri.map(i => targetMeshPoints[i]);
-      const dst = tri.map(i => liveMeshPoints[i]);
+      const dst = liveMeshPoints[i];
       warpTriangleImage(swapCtx, targetCanvas, src, dst);
     }
-  } else if (hasSynthetic && targetCanvas.width && targetCanvas.height) {
-    // Direct synthetic identity fallback: no dependency on Human.js being able
-    // to recognize the procedural target itself.
-    const targetW = syntheticIdentity?.geometry?.faceW || Math.max(120, b.w);
-    const targetH = syntheticIdentity?.geometry?.faceH || Math.max(170, b.h);
-    const scaleX = (b.w * 1.16) / Math.max(1, targetW);
-    const scaleY = (b.h * 1.28) / Math.max(1, targetH);
-    swapCtx.drawImage(
-      targetCanvas,
-      syntheticIdentity?.geometry?.cx - targetW * 0.5,
-      syntheticIdentity?.geometry?.cy - targetH * 0.5,
-      targetW,
-      targetH,
-      -targetW * scaleX * 0.5,
-      -targetH * scaleY * 0.5,
-      targetW * scaleX,
-      targetH * scaleY
-    );
   } else {
     swapCtx.restore();
     return false;
@@ -802,7 +823,29 @@ function warpFace(points) {
 
   swapCtx.restore();
 
-  updateSwapMask(points, b.w, b.h);
+  // Synthetic identities use a stable oval mask; manual references keep the
+  // tracked landmark hull. This prevents a procedural face from disappearing
+  // when its own synthetic landmarks are not detectable.
+  if (hasSynthetic) {
+    swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
+    swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
+    swapMaskCtx.save();
+    swapMaskCtx.translate(cx, cy);
+    swapMaskCtx.rotate(faceTilt);
+    const maskRx = b.w * 0.59;
+    const maskRy = b.h * 0.67;
+    const maskFeather = Math.max(2, Math.min(10, Math.round(Math.min(b.w, b.h) * 0.025)));
+    swapMaskCtx.beginPath();
+    swapMaskCtx.ellipse(0, 0, maskRx, maskRy, 0, 0, Math.PI * 2);
+    swapMaskCtx.closePath();
+    swapMaskCtx.fillStyle = '#fff';
+    swapMaskCtx.filter = `blur(${maskFeather}px)`;
+    swapMaskCtx.fill();
+    swapMaskCtx.restore();
+  } else {
+    updateSwapMask(points, b.w, b.h);
+  }
+
   swapCtx.globalCompositeOperation = 'destination-in';
   swapCtx.drawImage(swapMask, 0, 0);
   swapCtx.globalCompositeOperation = 'source-over';
