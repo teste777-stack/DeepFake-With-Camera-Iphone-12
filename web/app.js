@@ -1063,6 +1063,9 @@ function drawCompositor() {
   lastCompositorFrame = now;
 
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+  // Always present the latest remote frame first. If tracking is not ready,
+  // the user must still see the camera instead of a blank compositor canvas.
+  remoteCtx.drawImage(sourceFrame, 0, 0);
   compositorCtx.drawImage(sourceFrame, 0, 0);
 
   const face = latestFaces[0];
@@ -1204,8 +1207,10 @@ async function pumpRemoteFrame() {
     resolution.textContent = remote.width + ' × ' + remote.height + ' / WSS';
     setStatus('IPHONE REMOTE + WSS', true);
     enginePipe.textContent = identityReady ? 'REMOTE TRACK + COMPOSITE' : 'REMOTE FRAME BUFFER';
-    // Human detection is throttled independently; the compositor reuses the
-    // newest landmarks instead of coupling transport decode to detection.
+    // Trigger detection from the actual decoded remote frame. The previous
+    // binary transport optimization removed the old detection call, leaving
+    // FACES at zero even though frames were arriving correctly.
+    detectFaceFrame();
   } catch {
     // Ignore a malformed/stale frame and keep the live stream running.
   } finally {
