@@ -318,22 +318,16 @@ clearTestImageButton?.addEventListener('click', () => {
 });
 
 generateFaceButton?.addEventListener('click', async () => {
+  // Identity generation must never request camera permission or select a
+  // hardware camera. Camera capture is controlled exclusively by ATIVAR CÂMERA.
   await generateSyntheticFace(seedInput.value);
-  // Generating an identity is also the explicit user gesture that can start
-  // the iPhone camera. Without a live source frame there is nothing to track
-  // or replace, so keep the pipeline from stopping at "GENERATED IDENTITY".
-  if (!stream && !testImageActive) {
-    await startCamera();
-  }
 });
 
 randomFaceButton?.addEventListener('click', async () => {
-  const seed = Math.floor(Math.random()*2147483647);
+  const seed = Math.floor(Math.random() * 2147483647);
   seedInput.value = String(seed);
+  // Same rule as GENERATE FACE: RANDOM changes only the synthetic identity.
   await generateSyntheticFace(seed);
-  if (!stream && !testImageActive) {
-    await startCamera();
-  }
 });
 
 
