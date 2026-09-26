@@ -1042,9 +1042,14 @@ function drawCompositor() {
   const face = latestFaces[0];
   const trackedPoints = face ? extractLandmarks(face) : [];
   const nowTracking = performance.now();
-  const points = trackedPoints.length >= 10
-    ? smoothLandmarks(trackedPoints)
-    : ((nowTracking - lastValidFaceAt) <= faceTrackingGraceMs ? smoothedLandmarks : []);
+  // TEST IMAGE is a deterministic still-frame diagnostic. Do not let the
+  // temporal tracker reject the only detected sample: use the current face
+  // directly so the swap is visible immediately after detection.
+  const points = testImageActive
+    ? (trackedPoints.length >= 10 ? trackedPoints : smoothedLandmarks)
+    : (trackedPoints.length >= 10
+      ? smoothLandmarks(trackedPoints)
+      : ((nowTracking - lastValidFaceAt) <= faceTrackingGraceMs ? smoothedLandmarks : []));
   if (points.length >= 10 && warpFace(points)) {
     if (testImageActive) {
       testImageStatus.textContent = 'FACE SWAP ACTIVE / ' + points.length + ' POINTS';
