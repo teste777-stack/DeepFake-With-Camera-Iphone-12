@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const WebSocket = require('ws');
 const mdns = require('multicast-dns')();
 
@@ -12,6 +13,8 @@ const PORT = Number(process.env.PORT || 7777);
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = path.join(__dirname, '..', 'web');
 const CERT_DIR = path.join(__dirname, '..', 'certs');
+const FACE_ENGINE_PORT = Number(process.env.FACE_ENGINE_PORT || 7780);
+let faceEngineProcess = null;
 
 app.use(express.static(ROOT));
 app.get('/vendor/human.js', (_req, res) => {
@@ -20,6 +23,47 @@ app.get('/vendor/human.js', (_req, res) => {
   res.sendFile(human);
 });
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'x.local-camera', version: '0.2.0' }));
+app.use('/api/face-source', express.raw({ type: ['image/*', 'application/octet-stream'], limit: '10mb' }));
+app.use('/api/face-swap', express.raw({ type: ['image/*', 'application/octet-stream'], limit: '10mb' }));
+
+async function faceEngineFetch(pathname, options = {}) {
+  return fetch('http://127.0.0.1:' + FACE_ENGINE_PORT + pathname, options);
+}
+
+app.post('/api/face-source', async (req, res) => {
+  try {
+    if (!req.body?.length) return res.status(400).json({ ok: false, error: 'EMPTY SOURCE IMAGE' });
+    const upstream = await faceEngineFetch('/source', {
+      method: 'POST',
+      headers: { 'Content-Type': req.headers['content-type'] || 'image/jpeg' },
+      body: req.body
+    });
+    const text = await upstream.text();
+    res.status(upstream.status).type('application/json').send(text);
+  } catch (err) {
+    res.status(503).json({ ok: false, error: 'FACE ENGINE OFFLINE: ' + err.message });
+  }
+});
+
+app.post('/api/face-swap', async (req, res) => {
+  try {
+    if (!req.body?.length) return res.status(400).type('text/plain').send('EMPTY FRAME');
+    const upstream = await faceEngineFetch('/swap', {
+      method: 'POST',
+      headers: { 'Content-Type': req.headers['content-type'] || 'image/jpeg' },
+      body: req.body
+    });
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    res.status(upstream.status);
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'text/plain');
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(buffer);
+  } catch (err) {
+    res.status(503).type('text/plain').send('FACE ENGINE OFFLINE: ' + err.message);
+  }
+}
+
+
 
 const state = {
   connected: 0,
@@ -257,6 +301,25 @@ mdns.on('query', (query) => {
   });
 });
 
+function startFaceEngine() {
+  const script = path.join(__dirname, '..', 'face-engine', 'engine.py');
+  if (!fs.existsSync(script)) {
+    console.warn('[FACE ENGINE] engine.py não encontrado');
+    return;
+  }
+  const python = process.env.PYTHON_EXECUTABLE || 'python';
+  faceEngineProcess = spawn(python, [script], {
+    cwd: path.join(__dirname, '..'),
+    windowsHide: true,
+    stdio: 'inherit',
+    env: { ...process.env, FACE_ENGINE_PORT: String(FACE_ENGINE_PORT) }
+  });
+  faceEngineProcess.on('error', err => console.warn('[FACE ENGINE] start failed:', err.message));
+  faceEngineProcess.on('exit', code => console.warn('[FACE ENGINE] exited:', code));
+}
+
+startFaceEngine();
+
 server.listen(PORT, HOST, () => {
   console.log('');
   console.log('=== x.local CAMERA NODE ===');
@@ -280,5 +343,9 @@ setInterval(() => {
   state._lastFrames = state.frames;
 }, 1000);
 
+
+process.on('exit', () => {
+  if (faceEngineProcess && !faceEngineProcess.killed) faceEngineProcess.kill();
+});
 
 // Live JPEGs stay compressed on the server. Face detection/compositing runs in the browser with Human.js.
