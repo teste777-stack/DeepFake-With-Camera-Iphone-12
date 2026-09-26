@@ -31,6 +31,14 @@
           <div id="identityStatus" class="identity-status">NO SYNTHETIC FACE</div>
         </div>
         <div class="test-image-panel">
+          <div class="identity-title">NEURAL FACE SWAP / LOCAL GPU</div>
+          <div class="identity-controls">
+            <input id="neuralSourceInput" type="file" accept="image/*" hidden>
+            <button id="neuralSourceButton" class="secondary">CARREGAR ROSTO FONTE</button>
+            <button id="neuralSwapButton" class="secondary">NEURAL SWAP: OFF</button>
+          </div>
+          <div id="neuralStatus" class="identity-status">ENGINE NÃO CONFIGURADO</div>
+        </div>
           <div class="identity-title">TEST IMAGE / PIPELINE</div>
           <div class="identity-controls">
             <input id="testImageInput" type="file" accept="image/*" hidden>
@@ -54,7 +62,7 @@
       <article class="card">
         <div class="card-title">REMOTE FRAME / PC</div>
         <canvas id="remotePreview" width="640" height="360"></canvas>
-        <div class="compositor-note">COMPOSITOR: SYNTHETIC IDENTITY + TRACKING + TEMPORAL SMOOTHING</div>
+        <div class="compositor-note">COMPOSITOR: NEURAL FACE SWAP + TRACKING + TEMPORAL SMOOTHING</div>
         <div class="info">
           <div><span>REMOTE FPS</span><b id="remoteFps">0</b></div>
           <div><span>FRAMES</span><b id="remoteFrames">0</b></div>
@@ -88,6 +96,6 @@
     </section>
   </main>
   <script src="/vendor/human.js"></script>
-  <script src="/app.js?v=20260926-photo-loop-16"></script>
+  <script src="/app.js?v=20260926-neural-swap-17"></script>
 </body>
 </html>
