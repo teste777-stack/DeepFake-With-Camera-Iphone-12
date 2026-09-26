@@ -61,9 +61,7 @@ app.post('/api/face-swap', async (req, res) => {
   } catch (err) {
     res.status(503).type('text/plain').send('FACE ENGINE OFFLINE: ' + err.message);
   }
-}
-
-
+});
 
 const state = {
   connected: 0,
