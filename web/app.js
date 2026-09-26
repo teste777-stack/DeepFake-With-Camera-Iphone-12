@@ -978,7 +978,6 @@ function warpFace(points) {
     compositorCtx.restore();
     if (testImageActive) setCompositorDebug('DIRECT SYNTHETIC SWAP');
     return true;
-  }
   } else if (meshReady) {
     // Manual reference images keep the landmark/Delaunay warp path.
     swapCtx.translate(-cx, -cy);
