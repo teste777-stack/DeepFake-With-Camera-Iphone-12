@@ -63,6 +63,14 @@ let testImageActive = false;
 let testLoopTimer = null;
 let testSourceImage = null;
 let testLoopPhase = 0;
+let neuralSwapEnabled = false;
+let neuralSourceReady = false;
+let neuralBusy = false;
+let neuralLastAt = 0;
+let neuralSourceInput = document.getElementById('neuralSourceInput');
+let neuralSourceButton = document.getElementById('neuralSourceButton');
+let neuralSwapButton = document.getElementById('neuralSwapButton');
+let neuralStatus = document.getElementById('neuralStatus');
 
 function seededRandom(seed) {
   let x = (Number(seed) >>> 0) || 1;
@@ -220,6 +228,92 @@ async function generateSyntheticFace(seed) {
   engineStatus.textContent = 'GENERATED IDENTITY READY';
   enginePipe.textContent = 'GENERATED IDENTITY';
 }
+
+async function uploadNeuralSource(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  try {
+    neuralStatus.textContent = 'ENVIANDO ROSTO FONTE...';
+    const response = await fetch('/api/face-source', {
+      method: 'POST',
+      headers: { 'Content-Type': file.type },
+      body: file
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'FACE SOURCE ERROR');
+    neuralSourceReady = true;
+    neuralSourceButton.textContent = 'ROSTO: ' + file.name;
+    neuralStatus.textContent = 'ROSTO FONTE PRONTO / ' + (data.faces || 1) + ' FACE';
+    enginePipe.textContent = 'NEURAL SOURCE READY';
+  } catch (err) {
+    neuralSourceReady = false;
+    neuralStatus.textContent = 'SOURCE ERROR / ' + (err?.message || 'ENGINE OFFLINE');
+    console.error('[NEURAL SOURCE]', err);
+  }
+}
+
+async function toggleNeuralSwap() {
+  neuralSwapEnabled = !neuralSwapEnabled;
+  if (neuralSwapEnabled && !neuralSourceReady) {
+    neuralSwapEnabled = false;
+    neuralStatus.textContent = 'SELECIONE PRIMEIRO UM ROSTO FONTE';
+    return;
+  }
+  neuralSwapButton.textContent = neuralSwapEnabled ? 'NEURAL SWAP: ON' : 'NEURAL SWAP: OFF';
+  neuralStatus.textContent = neuralSwapEnabled ? 'NEURAL SWAP ATIVO / AGUARDANDO FRAME' : 'NEURAL SWAP DESATIVADO';
+  if (neuralSwapEnabled) {
+    syntheticIdentity = null;
+    identityReady = false;
+    compositorMode = 'NEURAL FACE SWAP';
+    engineStatus.textContent = 'NEURAL SWAP / STARTING';
+    enginePipe.textContent = 'NEURAL INFERENCE';
+  } else {
+    enginePipe.textContent = 'FACE DETECTOR';
+  }
+}
+
+async function requestNeuralSwap() {
+  if (!neuralSwapEnabled || !neuralSourceReady || neuralBusy) return false;
+  const now = performance.now();
+  if (now - neuralLastAt < 100) return false;
+  neuralLastAt = now;
+  neuralBusy = true;
+  try {
+    const blob = await new Promise((resolve) => sourceFrame.toBlob(resolve, 'image/jpeg', 0.82));
+    if (!blob) return false;
+    const started = performance.now();
+    const response = await fetch('/api/face-swap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/jpeg' },
+      body: blob
+    });
+    if (!response.ok) {
+      const msg = await response.text();
+      throw new Error(msg || 'NEURAL ENGINE ERROR');
+    }
+    const resultBlob = await response.blob();
+    const bitmap = await createImageBitmap(resultBlob);
+    compositorCtx.setTransform(1, 0, 0, 1, 0, 0);
+    compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
+    compositorCtx.drawImage(bitmap, 0, 0, compositor.width, compositor.height);
+    bitmap.close();
+    const elapsed = Math.round(performance.now() - started);
+    processMs.textContent = elapsed + ' ms';
+    engineStatus.textContent = 'NEURAL FACE SWAP ACTIVE';
+    enginePipe.textContent = 'GPU NEURAL SWAP';
+    meshPipe.textContent = 'NEURAL SWAP / TEMPORAL';
+    neuralStatus.textContent = 'NEURAL SWAP ACTIVE / ' + elapsed + ' ms';
+    remoteCtx.drawImage(compositor, 0, 0, remote.width, remote.height);
+    return true;
+  } catch (err) {
+    neuralStatus.textContent = 'NEURAL ENGINE OFFLINE / ' + (err?.message || 'ERROR');
+    engineStatus.textContent = 'NEURAL ENGINE OFFLINE';
+    console.warn('[NEURAL SWAP]', err);
+    return false;
+  } finally {
+    neuralBusy = false;
+  }
+}
+
 async function loadTestImage(file) {
   if (!file || !file.type.startsWith('image/')) return;
   try {
@@ -303,6 +397,13 @@ async function loadTestImage(file) {
   }
 }
 
+neuralSourceButton?.addEventListener('click', () => neuralSourceInput?.click());
+neuralSourceInput?.addEventListener('change', () => {
+  const file = neuralSourceInput.files?.[0];
+  uploadNeuralSource(file);
+});
+neuralSwapButton?.addEventListener('click', toggleNeuralSwap);
+
 testImageButton?.addEventListener('click', () => testImageInput?.click());
 testImageInput?.addEventListener('change', () => {
   const file = testImageInput.files?.[0];
@@ -340,6 +441,7 @@ function drawTestLoopFrame() {
   );
 
   detectFaceFrame();
+  void requestNeuralSwap();
 }
 
 function startTestImageLoop() {
