@@ -903,10 +903,11 @@ function warpFace(points) {
     targetMeshPoints.length >= 12 &&
     targetMeshTopology.length > 0;
 
-  if (hasSynthetic && (!targetMeshPoints.length || !targetMeshTopology.length)) {
-    buildSyntheticTarget(points);
-  }
-
+  // Synthetic identity rendering is intentionally independent from the
+  // Delaunay/reference mesh. The procedural face is already a complete image;
+  // requiring a generated mesh here can prevent the compositor from ever
+  // reaching the visible swap path when a still-frame diagnostic has only a
+  // detector/landmark result.
   if (!hasSynthetic && !hasManualTarget) return false;
 
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
@@ -997,6 +998,8 @@ function warpFace(points) {
   // tracked landmark hull. This prevents a procedural face from disappearing
   // when its own synthetic landmarks are not detectable.
   if (hasSynthetic) {
+    // TEST IMAGE uses the live detector bounds directly. This makes the
+    // diagnostic deterministic and avoids depending on synthetic mesh topology.
     swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
     swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
     swapMaskCtx.save();
