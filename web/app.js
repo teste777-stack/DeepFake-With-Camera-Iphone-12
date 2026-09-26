@@ -1063,10 +1063,12 @@ function drawCompositor() {
   lastCompositorFrame = now;
 
   compositorCtx.clearRect(0, 0, compositor.width, compositor.height);
-  // Always present the latest remote frame first. If tracking is not ready,
-  // the user must still see the camera instead of a blank compositor canvas.
-  remoteCtx.drawImage(sourceFrame, 0, 0);
-  compositorCtx.drawImage(sourceFrame, 0, 0);
+  // Draw the decoded remote frame directly to the visible preview first.
+  // This guarantees the camera remains visible even if the compositor/swap
+  // path throws or produces an invalid transparent layer.
+  remoteCtx.clearRect(0, 0, remote.width, remote.height);
+  remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
+  compositorCtx.drawImage(sourceFrame, 0, 0, compositor.width, compositor.height);
 
   const face = latestFaces[0];
   const trackedPoints = face ? extractLandmarks(face) : [];
@@ -1095,7 +1097,9 @@ function drawCompositor() {
     }
     remoteCtx.drawImage(compositor, 0, 0);
   } else {
-    remoteCtx.drawImage(sourceFrame, 0, 0);
+    // No valid swap yet: keep the raw iPhone image visible.
+    remoteCtx.clearRect(0, 0, remote.width, remote.height);
+    remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
     if (performance.now() - lastValidFaceAt > faceTrackingGraceMs) smoothedLandmarks = [];
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
     if (testImageActive && latestFaces.length) setCompositorDebug('FAIL: WARP RETURNED FALSE');
