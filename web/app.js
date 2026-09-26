@@ -1073,6 +1073,8 @@ function drawCompositor() {
     meshPipe.textContent = identityReady ? 'WAITING FOR LIVE FACE' : 'SEARCHING';
   }
 }
+requestAnimationFrame(drawCompositor);
+
 async function detectFaceFrame() {
   if (!humanReady || faceDetectBusy || !remote.width) return;
   const now = performance.now();
