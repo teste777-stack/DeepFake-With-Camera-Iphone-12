@@ -30,6 +30,15 @@
           </div>
           <div id="identityStatus" class="identity-status">NO SYNTHETIC FACE</div>
         </div>
+        <div class="test-image-panel">
+          <div class="identity-title">TEST IMAGE / PIPELINE</div>
+          <div class="identity-controls">
+            <input id="testImageInput" type="file" accept="image/*" hidden>
+            <button id="testImageButton" class="secondary">CARREGAR FOTO</button>
+            <button id="clearTestImage" class="secondary" disabled>LIMPAR TESTE</button>
+          </div>
+          <div id="testImageStatus" class="identity-status">NO TEST IMAGE</div>
+        </div>
         <div class="controls">
           <button id="start">ATIVAR CÂMERA</button>
           <button id="stop" disabled>PARAR</button>
