@@ -167,9 +167,12 @@ wss.on('connection', (ws, req) => {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     if (msg.type === 'startRemoteCam') {
-      ws.isCamera = true;
-      state.cameraClients++;
-      broadcast({ type: 'camera-status', active: true, clients: state.cameraClients }, ws);
+      // A reconnect or duplicate start signal must not count the same socket twice.
+      if (!ws.isCamera) {
+        ws.isCamera = true;
+        state.cameraClients++;
+      }
+      broadcast({ type: 'camera-status', active: state.cameraClients > 0, clients: state.cameraClients }, ws);
       return;
     }
 
