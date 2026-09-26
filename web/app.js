@@ -729,6 +729,9 @@ function resetCompositorState(clearSource = false) {
   swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
 
   if (clearSource) {
+    remoteSourceActive = false;
+    lastRemoteFrameAt = 0;
+    remoteFrameCount = 0;
     sourceFrameCtx.setTransform(1, 0, 0, 1, 0, 0);
     sourceFrameCtx.clearRect(0, 0, sourceFrame.width, sourceFrame.height);
     remoteCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1147,6 +1150,10 @@ let cameraStartPending = false;
 let remoteBusy = false;
 let pendingRemoteFrame = null;
 let remotePumpScheduled = false;
+let remoteSourceActive = false;
+let lastRemoteFrameAt = 0;
+let remoteFrameCount = 0;
+let lastRemoteFpsTick = performance.now();
 const canvas = document.createElement('canvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 
@@ -1168,6 +1175,23 @@ async function pumpRemoteFrame() {
     sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
     remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
     bitmap.close();
+
+    // A remote frame is the iPhone camera feed for the PC/viewer page.
+    // Once it arrives, local getUserMedia must stop overwriting sourceFrame.
+    remoteSourceActive = true;
+    lastRemoteFrameAt = performance.now();
+    remoteFrameCount++;
+    const now = performance.now();
+    if (now - lastRemoteFpsTick >= 1000) {
+      remoteFrames.textContent = String(remoteFrameCount);
+      remoteFps.textContent = Math.round(remoteFrameCount * 1000 / (now - lastRemoteFpsTick)) + ' FPS';
+      remoteFrameCount = 0;
+      lastRemoteFpsTick = now;
+    }
+    source.textContent = 'iPhone Camera / REMOTE';
+    resolution.textContent = remote.width + ' × ' + remote.height + ' / WSS';
+    setStatus('IPHONE REMOTE + WSS', true);
+    enginePipe.textContent = identityReady ? 'REMOTE TRACK + COMPOSITE' : 'REMOTE FRAME BUFFER';
     detectFaceFrame();
   } catch {
     // Ignore a malformed/stale frame and keep the live stream running.
@@ -1194,6 +1218,8 @@ function startFramePump() {
   clearInterval(frameTimer);
   frameCount = 0;
   lastFps = performance.now();
+  remoteFrameCount = 0;
+  lastRemoteFpsTick = performance.now();
 
   // Local capture is authoritative. WSS is only an optional transport layer.
   // Never gate this loop on WebSocket state: the compositor must keep running
@@ -1221,8 +1247,16 @@ function startFramePump() {
         return;
       }
 
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
+      // If the PC is receiving the iPhone feed, the remote source is authoritative.
+      // Keep the local camera alive only as a fallback when no remote frame is fresh.
+      const remoteFresh = remoteSourceActive && (performance.now() - lastRemoteFrameAt) < 1500;
+      if (!remoteFresh) {
+        remoteSourceActive = false;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
+      } else {
+        return;
+      }
 
       // Detection and compositor run from the local frame, not from the
       // server echo. The compositor render loop itself is continuous.
@@ -1247,8 +1281,10 @@ function startFramePump() {
       frameCount++;
       const now = performance.now();
       if (now - lastFps >= 1000) {
-        remoteFrames.textContent = String(frameCount);
-        remoteFps.textContent = Math.round(frameCount * 1000 / (now - lastFps)) + ' FPS';
+        if (!remoteSourceActive) {
+          remoteFrames.textContent = String(frameCount);
+          remoteFps.textContent = Math.round(frameCount * 1000 / (now - lastFps)) + ' FPS';
+        }
         processMs.textContent = Math.max(0, Math.round(performance.now() - startedAt)) + ' ms';
         frameCount = 0;
         lastFps = now;
@@ -1300,7 +1336,12 @@ function connect() {
     }
 
     if (msg.type === 'camera-status') {
-      if (!humanReady) engineStatus.textContent = msg.active ? 'CAMERA LIVE' : 'STANDBY';
+      if (msg.active) {
+        engineStatus.textContent = humanReady && identityReady ? 'IPHONE CAMERA / WAITING FACE' : 'CAMERA LIVE';
+        enginePipe.textContent = humanReady ? 'REMOTE FRAME BUFFER' : 'BUFFER';
+      } else if (!stream && !remoteSourceActive) {
+        engineStatus.textContent = 'STANDBY';
+      }
     }
   };
 }
@@ -1332,6 +1373,8 @@ async function startCamera() {
   try {
     if (stream) stopCamera(false);
     pendingRemoteFrame = null;
+    remoteSourceActive = false;
+    lastRemoteFrameAt = 0;
     resetCompositorState(false);
     await new Promise(resolve => requestAnimationFrame(resolve));
     stream = await navigator.mediaDevices.getUserMedia({
@@ -1399,6 +1442,8 @@ function stopCamera(notify = true) {
 
   // Do not keep compositing the last camera frame after the camera stops.
   pendingRemoteFrame = null;
+  remoteSourceActive = false;
+  lastRemoteFrameAt = 0;
   resetCompositorState(true);
 
   placeholder.style.display = 'block';
