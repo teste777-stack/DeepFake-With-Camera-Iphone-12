@@ -1081,7 +1081,14 @@ function drawCompositor() {
     : (trackedPoints.length >= 10
       ? smoothLandmarks(trackedPoints)
       : ((nowTracking - lastValidFaceAt) <= faceTrackingGraceMs ? smoothedLandmarks : []));
-  if (points.length >= 10 && warpFace(points)) {
+  let swapped = false;
+  try {
+    swapped = points.length >= 10 && warpFace(points);
+  } catch (err) {
+    console.warn('[COMPOSITOR] warp failed, keeping raw camera frame', err);
+    swapped = false;
+  }
+  if (swapped) {
     if (testImageActive) {
       testImageStatus.textContent = 'FACE SWAP ACTIVE / ' + points.length + ' POINTS';
       console.debug('[COMPOSITOR] ACTIVE points=', points.length, 'synthetic=', !!syntheticIdentity);
@@ -1095,7 +1102,9 @@ function drawCompositor() {
     } else {
       meshPipe.textContent = targetImage && targetLandmarks.length ? 'FACE SWAP / LANDMARK WARP' : compositorMode + ' / WARP READY';
     }
-    remoteCtx.drawImage(compositor, 0, 0);
+    // Keep the swap only when the compositor actually contains pixels.
+    // The raw camera frame was already painted before this branch.
+    remoteCtx.drawImage(compositor, 0, 0, remote.width, remote.height);
   } else {
     // No valid swap yet: keep the raw iPhone image visible.
     remoteCtx.clearRect(0, 0, remote.width, remote.height);
