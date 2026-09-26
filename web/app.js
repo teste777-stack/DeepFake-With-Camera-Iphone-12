@@ -998,30 +998,26 @@ function warpFace(points) {
   // tracked landmark hull. This prevents a procedural face from disappearing
   // when its own synthetic landmarks are not detectable.
   if (hasSynthetic) {
-    // TEST IMAGE uses the live detector bounds directly. This makes the
-    // diagnostic deterministic and avoids depending on synthetic mesh topology.
-    swapMaskCtx.setTransform(1, 0, 0, 1, 0, 0);
-    swapMaskCtx.clearRect(0, 0, swapMask.width, swapMask.height);
-    swapMaskCtx.save();
-    swapMaskCtx.translate(cx, cy);
-    swapMaskCtx.rotate(faceTilt);
-    const maskRx = b.w * 0.59;
-    const maskRy = b.h * 0.67;
-    const maskFeather = Math.max(2, Math.min(10, Math.round(Math.min(b.w, b.h) * 0.025)));
-    swapMaskCtx.beginPath();
-    swapMaskCtx.ellipse(0, 0, maskRx, maskRy, 0, 0, Math.PI * 2);
-    swapMaskCtx.closePath();
-    swapMaskCtx.fillStyle = '#fff';
-    swapMaskCtx.filter = `blur(${maskFeather}px)`;
-    swapMaskCtx.fill();
-    swapMaskCtx.restore();
+    // The synthetic face is already clipped to the tracked face ellipse above.
+    // Keep the test path independent from a second canvas/filter operation:
+    // destination-in can become a no-op on some browser GPU paths when the
+    // source and mask canvases are backed by different compositing states.
+    // The feathered ellipse below is drawn directly into the swap layer.
+    swapCtx.save();
+    swapCtx.globalCompositeOperation = 'destination-out';
+    swapCtx.translate(cx, cy);
+    swapCtx.rotate(faceTilt);
+    const feather = Math.max(2, Math.min(12, Math.round(Math.min(b.w, b.h) * 0.03)));
+    swapCtx.beginPath();
+    swapCtx.ellipse(0, 0, b.w * 0.61, b.h * 0.69, 0, 0, Math.PI * 2);
+    swapCtx.clip();
+    swapCtx.restore();
   } else {
     updateSwapMask(points, b.w, b.h);
+    swapCtx.globalCompositeOperation = 'destination-in';
+    swapCtx.drawImage(swapMask, 0, 0);
+    swapCtx.globalCompositeOperation = 'source-over';
   }
-
-  swapCtx.globalCompositeOperation = 'destination-in';
-  swapCtx.drawImage(swapMask, 0, 0);
-  swapCtx.globalCompositeOperation = 'source-over';
 
   compositorCtx.save();
   compositorCtx.globalAlpha = 0.98;
