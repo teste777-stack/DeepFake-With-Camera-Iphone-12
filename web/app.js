@@ -1150,6 +1150,7 @@ let cameraStartPending = false;
 let remoteBusy = false;
 let pendingRemoteFrame = null;
 let remotePumpScheduled = false;
+let remoteTransportEncodeBusy = false;
 let remoteSourceActive = false;
 let lastRemoteFrameAt = 0;
 let remoteFrameCount = 0;
@@ -1170,14 +1171,25 @@ async function pumpRemoteFrame() {
   const frameData = pendingRemoteFrame;
   pendingRemoteFrame = null;
   try {
-    const blob = await fetch(frameData).then(r => r.blob());
+    // New clients receive JPEG bytes directly over WebSocket. Keep a string
+    // fallback for cached clients, but avoid fetch(data:) in the live path.
+    const blob = typeof frameData === 'string'
+      ? (() => {
+          const comma = frameData.indexOf(',');
+          if (comma < 0) throw new Error('INVALID JPEG DATA URL');
+          const binary = atob(frameData.slice(comma + 1));
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          return new Blob([bytes], { type: 'image/jpeg' });
+        })()
+      : (frameData instanceof Blob
+        ? frameData
+        : new Blob([frameData], { type: 'image/jpeg' }));
+
     const bitmap = await createImageBitmap(blob);
     sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
-    remoteCtx.drawImage(sourceFrame, 0, 0, remote.width, remote.height);
     bitmap.close();
 
-    // A remote frame is the iPhone camera feed for the PC/viewer page.
-    // Once it arrives, local getUserMedia must stop overwriting sourceFrame.
     remoteSourceActive = true;
     lastRemoteFrameAt = performance.now();
     remoteFrameCount++;
@@ -1192,7 +1204,8 @@ async function pumpRemoteFrame() {
     resolution.textContent = remote.width + ' × ' + remote.height + ' / WSS';
     setStatus('IPHONE REMOTE + WSS', true);
     enginePipe.textContent = identityReady ? 'REMOTE TRACK + COMPOSITE' : 'REMOTE FRAME BUFFER';
-    detectFaceFrame();
+    // Human detection is throttled independently; the compositor reuses the
+    // newest landmarks instead of coupling transport decode to detection.
   } catch {
     // Ignore a malformed/stale frame and keep the live stream running.
   } finally {
@@ -1262,12 +1275,15 @@ function startFramePump() {
       // server echo. The compositor render loop itself is continuous.
       scheduleLocalDetection();
 
-      if (wsOpen && qSize <= 2500000) {
+      if (wsOpen && qSize <= 2500000 && !remoteTransportEncodeBusy) {
         const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
-        ws.send(JSON.stringify({
-          type: 'webcamFrame',
-          data: canvas.toDataURL('image/jpeg', quality)
-        }));
+        remoteTransportEncodeBusy = true;
+        canvas.toBlob((blob) => {
+          remoteTransportEncodeBusy = false;
+          if (!blob || ws.readyState !== WebSocket.OPEN) return;
+          if ((ws.bufferedAmount || 0) > 2500000) return;
+          ws.send(blob);
+        }, 'image/jpeg', quality);
       } else if (wsOpen && qSize > 2500000) {
         // Network backpressure must only drop this transport frame. The local
         // compositor and frame counter continue to run normally.
@@ -1320,13 +1336,17 @@ function connect() {
   };
 
   ws.onmessage = async (event) => {
+    if (typeof event.data !== 'string') {
+      pendingRemoteFrame = event.data;
+      scheduleRemotePump();
+      return;
+    }
+
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
 
     if (msg.type === 'remoteFrame') {
-      // Latest-frame-wins without a long async loop. A continuously arriving
-      // stream must yield back to the browser between decodes so detection,
-      // painting and UI events cannot be starved.
+      // Compatibility path for a stale cached client.
       pendingRemoteFrame = msg.data;
       scheduleRemotePump();
     }
@@ -1344,6 +1364,7 @@ function connect() {
       }
     }
   };
+;
 }
 
 async function pollEngine() {
