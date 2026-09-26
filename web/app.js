@@ -1316,11 +1316,31 @@ function wsUrl() {
   return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
 }
 
+let wsReconnectTimer = null;
+let wsConnecting = false;
+
 function connect() {
-  ws = new WebSocket(wsUrl());
+  if (wsConnecting) return;
+  if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+
+  wsConnecting = true;
+  try {
+    ws = new WebSocket(wsUrl());
+  } catch (err) {
+    wsConnecting = false;
+    setStatus('WSS RETRY');
+    console.error('[WSS] create failed', err);
+    scheduleReconnect();
+    return;
+  }
 
   ws.onopen = () => {
-    setStatus('WSS ONLINE', true);
+    wsConnecting = false;
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+    }
+    setStatus(stream ? 'CAMERA + WSS' : 'WSS ONLINE', true);
     if (!humanReady) {
       engineStatus.textContent = 'FRAME BUFFER';
       enginePipe.textContent = 'BUFFER';
@@ -1328,14 +1348,22 @@ function connect() {
     if (cameraStartPending && stream) {
       cameraStartPending = false;
       ws.send(JSON.stringify({ type: 'startRemoteCam' }));
-      // startFramePump() is already running independently from WSS.
-      setStatus('CAMERA + WSS', true);
     }
   };
 
+  ws.onerror = (event) => {
+    wsConnecting = false;
+    console.warn('[WSS] connection error', event);
+    if (!stream) setStatus('WSS RETRY');
+  };
+
   ws.onclose = () => {
-    setStatus('WSS OFFLINE');
-    setTimeout(connect, 1200);
+    wsConnecting = false;
+    if (!stream) setStatus('WSS OFFLINE');
+    else setStatus('CAMERA / WSS RETRY', true);
+
+    // Keep camera capture/compositor alive while WSS reconnects.
+    scheduleReconnect();
   };
 
   ws.onmessage = async (event) => {
@@ -1367,7 +1395,14 @@ function connect() {
       }
     }
   };
-;
+}
+
+function scheduleReconnect() {
+  if (wsReconnectTimer) return;
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    connect();
+  }, 1200);
 }
 
 async function pollEngine() {
