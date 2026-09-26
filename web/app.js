@@ -1205,7 +1205,7 @@ function startFramePump() {
   // Never gate this loop on WebSocket state: the compositor must keep running
   // even while WSS is reconnecting or temporarily unavailable.
   frameTimer = setInterval(() => {
-    if (!stream || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (!stream) return;
 
     const startedAt = performance.now();
     const wsOpen = ws?.readyState === WebSocket.OPEN;
@@ -1213,7 +1213,17 @@ function startFramePump() {
     if (wsOpen && qSize > 2500000) return;
 
     try {
-      if (!canvas.width || !canvas.height) return;
+      if (!canvas.width || !canvas.height) {
+        remoteFrames.textContent = '0 / CANVAS';
+        return;
+      }
+
+      // Safari can briefly report a stale readyState while the MediaStream
+      // track is already live. videoWidth is the stronger signal here.
+      if (video.videoWidth < 2 || video.videoHeight < 2) {
+        remoteFrames.textContent = '0 / VIDEO ' + video.readyState;
+        return;
+      }
 
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       sourceFrameCtx.drawImage(canvas, 0, 0, sourceFrame.width, sourceFrame.height);
@@ -1359,6 +1369,14 @@ async function startCamera() {
     // Start local capture immediately after getUserMedia succeeds. The camera
     // preview/compositor must not wait for WSS; WSS is only transport.
     cameraStartPending = true;
+
+    // Start capture as soon as the media element has real dimensions.
+    // iOS Safari may finish getUserMedia before the first video frame exists.
+    const ensurePump = () => {
+      if (stream) startFramePump();
+    };
+    video.addEventListener('loadeddata', ensurePump, { once: true });
+    video.addEventListener('playing', ensurePump, { once: true });
     startFramePump();
 
     if (ws?.readyState === WebSocket.OPEN) {
