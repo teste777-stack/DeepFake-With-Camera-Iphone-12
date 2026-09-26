@@ -232,8 +232,8 @@ const humanConfig = {
   cacheModels: true,
   face: {
     enabled: true,
-    detector: { enabled: true, rotation: false, return: true, maxDetected: 1, minConfidence: 0.30 },
-    mesh: { enabled: true },
+    detector: { enabled: true, rotation: true, return: true, maxDetected: 1, minConfidence: 0.18, minSize: 24, scale: 1.35 },
+    mesh: { enabled: true, keepInvalid: true },
     iris: { enabled: false },
     emotion: { enabled: false },
     description: { enabled: false },
@@ -269,10 +269,32 @@ async function initFaceEngine() {
 }
 
 function extractLandmarks(face) {
-  const mesh = face?.mesh;
-  if (!Array.isArray(mesh) || mesh.length < 10) return [];
-  return mesh.map(p => Array.isArray(p) ? [Number(p[0]), Number(p[1])] : [Number(p.x), Number(p.y)])
+  const mesh = Array.isArray(face?.mesh) ? face.mesh : [];
+  const points = mesh.map(p => Array.isArray(p)
+    ? [Number(p[0]), Number(p[1])]
+    : [Number(p?.x), Number(p?.y)])
     .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (points.length >= 10) return points;
+
+  // Human can keep a detector result even when FaceMesh rejects the sample.
+  // Use the detected face box as a stable fallback so the synthetic identity
+  // can still be positioned while the detailed mesh recovers.
+  const box = Array.isArray(face?.box) ? face.box : null;
+  if (!box || box.length < 4) return [];
+  const [x, y, w, h] = box.map(Number);
+  if (![x, y, w, h].every(Number.isFinite) || w < 24 || h < 24) return [];
+
+  const cx = x + w * 0.5;
+  const cy = y + h * 0.5;
+  const rx = w * 0.5;
+  const ry = h * 0.5;
+  const pointsFallback = [];
+  const count = 32;
+  for (let n = 0; n < count; n++) {
+    const a = (n / count) * Math.PI * 2;
+    pointsFallback.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]);
+  }
+  return pointsFallback;
 }
 
 function landmarkJumpTooLarge(points) {
