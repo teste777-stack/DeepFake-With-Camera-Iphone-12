@@ -269,20 +269,44 @@ async function initFaceEngine() {
 }
 
 function extractLandmarks(face) {
+  const frameW = Math.max(1, sourceFrame.width || remote.width);
+  const frameH = Math.max(1, sourceFrame.height || remote.height);
   const mesh = Array.isArray(face?.mesh) ? face.mesh : [];
-  const points = mesh.map(p => Array.isArray(p)
+  let points = mesh.map(p => Array.isArray(p)
     ? [Number(p[0]), Number(p[1])]
     : [Number(p?.x), Number(p?.y)])
     .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-  if (points.length >= 10) return points;
+
+  // Human may expose mesh coordinates normalized to 0..1. The compositor works
+  // in source-canvas pixels, so convert normalized coordinates before tracking.
+  if (points.length >= 10) {
+    const maxX = Math.max(...points.map(p => p[0]));
+    const maxY = Math.max(...points.map(p => p[1]));
+    const minX = Math.min(...points.map(p => p[0]));
+    const minY = Math.min(...points.map(p => p[1]));
+    if (maxX <= 1.5 && maxY <= 1.5 && minX >= -0.5 && minY >= -0.5) {
+      points = points.map(([x, y]) => [x * frameW, y * frameH]);
+    }
+    const bounds = faceBounds(points);
+    if (bounds && bounds.w >= 30 && bounds.h >= 30) return points;
+  }
 
   // Human can keep a detector result even when FaceMesh rejects the sample.
   // Use the detected face box as a stable fallback so the synthetic identity
   // can still be positioned while the detailed mesh recovers.
   const box = Array.isArray(face?.box) ? face.box : null;
   if (!box || box.length < 4) return [];
-  const [x, y, w, h] = box.map(Number);
-  if (![x, y, w, h].every(Number.isFinite) || w < 24 || h < 24) return [];
+  let [x, y, w, h] = box.map(Number);
+  if (![x, y, w, h].every(Number.isFinite)) return [];
+
+  // Detector boxes can also be normalized. Convert them into source pixels.
+  if (Math.abs(x) <= 1.5 && Math.abs(y) <= 1.5 && w <= 1.5 && h <= 1.5) {
+    x *= frameW;
+    y *= frameH;
+    w *= frameW;
+    h *= frameH;
+  }
+  if (w < 24 || h < 24) return [];
 
   const cx = x + w * 0.5;
   const cy = y + h * 0.5;
