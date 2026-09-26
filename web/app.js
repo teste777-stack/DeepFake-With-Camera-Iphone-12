@@ -957,49 +957,28 @@ function warpFace(points) {
     targetMeshTopology.length > 0 &&
     liveMeshPoints.length === targetMeshPoints.length;
 
-  swapCtx.save();
-  swapCtx.translate(cx, cy);
-  swapCtx.rotate(faceTilt);
-
   if (hasSynthetic && targetCanvas.width && targetCanvas.height) {
-    if (testImageActive) setCompositorDebug('DRAW SYNTHETIC ' + targetCanvas.width + 'x' + targetCanvas.height);
-    // Synthetic identities are rendered directly from their generated pixels.
-    // Do not require Human.js to detect the procedural face: Human.js only
-    // needs to track the real face that will receive the generated identity.
-    const targetW = syntheticIdentity?.geometry?.faceW || Math.max(120, b.w);
-    const targetH = syntheticIdentity?.geometry?.faceH || Math.max(170, b.h);
-    const drawW = b.w * 1.18;
-    const drawH = b.h * 1.30;
-
-    // A subtle inner shadow makes the generated silhouette read as a face
-    // instead of a flat sticker while preserving the generated skin details.
-    swapCtx.save();
-    swapCtx.beginPath();
-    swapCtx.ellipse(0, 0, drawW * 0.49, drawH * 0.49, 0, 0, Math.PI * 2);
-    swapCtx.clip();
-
-    swapCtx.drawImage(
-      targetCanvas,
-      syntheticIdentity?.geometry?.cx - targetW * 0.5,
-      syntheticIdentity?.geometry?.cy - targetH * 0.5,
-      targetW,
-      targetH,
-      -drawW * 0.5,
-      -drawH * 0.5,
-      drawW,
-      drawH
-    );
-
-    const shade = swapCtx.createRadialGradient(
-      -drawW * 0.16, -drawH * 0.20, drawW * 0.04,
-      0, 0, drawW * 0.72
-    );
-    shade.addColorStop(0, 'rgba(255,255,255,0.08)');
-    shade.addColorStop(0.62, 'rgba(0,0,0,0)');
-    shade.addColorStop(1, 'rgba(0,0,0,0.16)');
-    swapCtx.fillStyle = shade;
-    swapCtx.fillRect(-drawW * 0.5, -drawH * 0.5, drawW, drawH);
-    swapCtx.restore();
+    // Direct synthetic render path: draw straight into the compositor instead
+    // of passing through the intermediate alpha canvas. This makes the swap
+    // visible reliably on the live remote canvas.
+    compositorCtx.save();
+    compositorCtx.translate(cx, cy);
+    compositorCtx.rotate(faceTilt);
+    const drawW = Math.max(80, b.w * 1.18);
+    const drawH = Math.max(100, b.h * 1.30);
+    compositorCtx.beginPath();
+    compositorCtx.ellipse(0, 0, drawW * 0.49, drawH * 0.49, 0, 0, Math.PI * 2);
+    compositorCtx.clip();
+    const geo = syntheticIdentity?.geometry || {};
+    const srcW = Math.max(1, geo.faceW || b.w);
+    const srcH = Math.max(1, geo.faceH || b.h);
+    const srcX = Math.max(0, Math.min(targetCanvas.width - srcW, (geo.cx || targetCanvas.width * 0.5) - srcW * 0.5));
+    const srcY = Math.max(0, Math.min(targetCanvas.height - srcH, (geo.cy || targetCanvas.height * 0.5) - srcH * 0.5));
+    compositorCtx.drawImage(targetCanvas, srcX, srcY, srcW, srcH, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+    compositorCtx.restore();
+    if (testImageActive) setCompositorDebug('DIRECT SYNTHETIC SWAP');
+    return true;
+  }
   } else if (meshReady) {
     // Manual reference images keep the landmark/Delaunay warp path.
     swapCtx.translate(-cx, -cy);
