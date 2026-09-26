@@ -1,4 +1,5 @@
 import os
+import site
 import time
 from pathlib import Path
 
@@ -18,14 +19,56 @@ source_face = None
 face_app = None
 swapper = None
 engine_error = None
+ort_providers = []
+ort_cuda_ready = False
+_dll_dirs = []
+
+
+def configure_cuda_runtime():
+    """Expose CUDA/cuDNN DLLs installed by pip before ONNX Runtime loads."""
+    global _dll_dirs
+    candidates = []
+
+    for base in site.getsitepackages():
+        nvidia = Path(base) / "nvidia"
+        candidates.extend([
+            nvidia / "cudnn" / "bin",
+            nvidia / "cublas" / "bin",
+            nvidia / "cuda_runtime" / "bin",
+        ])
+
+    for env_name in ("CUDA_PATH", "CUDA_PATH_V12_6", "CUDA_PATH_V12_5"):
+        value = os.environ.get(env_name)
+        if value:
+            candidates.append(Path(value) / "bin")
+
+    for directory in candidates:
+        if not directory.is_dir():
+            continue
+        directory_str = str(directory)
+        if directory_str not in _dll_dirs:
+            _dll_dirs.append(directory_str)
+            try:
+                os.add_dll_directory(directory_str)
+            except (AttributeError, OSError):
+                pass
+        os.environ["PATH"] = directory_str + os.pathsep + os.environ.get("PATH", "")
+
 
 def load_engine():
-    global face_app, swapper, engine_error
+    global face_app, swapper, engine_error, ort_providers, ort_cuda_ready
+
     if face_app is not None and swapper is not None:
         return True
+
     try:
-        import insightface
+        configure_cuda_runtime()
+
+        import onnxruntime as ort
         from insightface.app import FaceAnalysis
+
+        ort_providers = list(ort.get_available_providers())
+        ort_cuda_ready = "CUDAExecutionProvider" in ort_providers
 
         if not MODEL_PATH.exists():
             raise RuntimeError(
@@ -34,11 +77,9 @@ def load_engine():
             )
 
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        face_app = FaceAnalysis(
-            name="buffalo_l",
-            providers=providers,
-        )
+        face_app = FaceAnalysis(name="buffalo_l", providers=providers)
         face_app.prepare(ctx_id=0, det_size=(640, 640))
+
         swapper = insightface.model_zoo.get_model(
             str(MODEL_PATH),
             providers=providers,
@@ -51,6 +92,7 @@ def load_engine():
         engine_error = str(exc)
         return False
 
+
 def decode(data: bytes):
     arr = np.frombuffer(data, dtype=np.uint8)
     image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -58,16 +100,21 @@ def decode(data: bytes):
         raise ValueError("INVALID IMAGE")
     return image
 
+
 @app.get("/health")
 def health():
     ready = load_engine()
     return {
         "ok": ready,
         "engine": "INSIGHTFACE / INSWAPPER",
-        "gpu": "CUDA" if ready else "UNAVAILABLE",
+        "gpu": "CUDA" if ort_cuda_ready else "CPU",
+        "cuda_provider": ort_cuda_ready,
+        "providers": ort_providers,
         "model": str(MODEL_PATH),
+        "model_exists": MODEL_PATH.exists(),
         "error": engine_error,
     }
+
 
 @app.post("/source")
 async def set_source(request: Request):
@@ -81,10 +128,14 @@ async def set_source(request: Request):
         if not faces:
             return JSONResponse({"ok": False, "error": "NO FACE IN SOURCE IMAGE"}, status_code=422)
         source_image = image
-        source_face = max(faces, key=lambda f: float(f.bbox[2] - f.bbox[0]) * float(f.bbox[3] - f.bbox[1]))
+        source_face = max(
+            faces,
+            key=lambda f: float(f.bbox[2] - f.bbox[0]) * float(f.bbox[3] - f.bbox[1]),
+        )
         return {"ok": True, "faces": len(faces)}
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
 
 @app.post("/swap")
 async def swap(request: Request):
@@ -98,20 +149,24 @@ async def swap(request: Request):
         if not faces:
             ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
             return Response(encoded.tobytes(), media_type="image/jpeg")
-        target = max(faces, key=lambda f: float(f.bbox[2] - f.bbox[0]) * float(f.bbox[3] - f.bbox[1]))
+
+        target = max(
+            faces,
+            key=lambda f: float(f.bbox[2] - f.bbox[0]) * float(f.bbox[3] - f.bbox[1]),
+        )
         result = swapper.get(frame, target, source_face, paste_back=True)
         ok, encoded = cv2.imencode(".jpg", result, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
         if not ok:
             raise RuntimeError("JPEG ENCODE FAILED")
+
         return Response(
             encoded.tobytes(),
             media_type="image/jpeg",
-            headers={
-                "X-Face-Swap-Ms": str(round((time.perf_counter() - started) * 1000, 2))
-            },
+            headers={"X-Face-Swap-Ms": str(round((time.perf_counter() - started) * 1000, 2))},
         )
     except Exception as exc:
         return Response("SWAP ERROR: " + str(exc), status_code=500, media_type="text/plain")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
