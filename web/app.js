@@ -1210,9 +1210,11 @@ function startFramePump() {
     const startedAt = performance.now();
     const wsOpen = ws?.readyState === WebSocket.OPEN;
     const qSize = wsOpen ? (ws.bufferedAmount || 0) : 0;
-    if (wsOpen && qSize > 2500000) return;
 
     try {
+      // Local capture is authoritative. Never abort the capture loop because
+      // the WSS/JPEG transport queue is congested: that previously made the
+      // visible FRAMES counter stay at zero while getUserMedia was LIVE.
       if (!canvas.width || !canvas.height) {
         remoteFrames.textContent = '0 / CANVAS';
         return;
@@ -1232,12 +1234,16 @@ function startFramePump() {
       // server echo. The compositor render loop itself is continuous.
       scheduleLocalDetection();
 
-      if (wsOpen) {
+      if (wsOpen && qSize <= 2500000) {
         const quality = qSize > 1000000 ? 0.58 : (qSize > 350000 ? 0.68 : 0.8);
         ws.send(JSON.stringify({
           type: 'webcamFrame',
           data: canvas.toDataURL('image/jpeg', quality)
         }));
+      } else if (wsOpen && qSize > 2500000) {
+        // Network backpressure must only drop this transport frame. The local
+        // compositor and frame counter continue to run normally.
+        console.warn('[CAMERA FRAME] WSS BACKPRESSURE', qSize);
       }
     } catch (err) {
       // Keep the interval alive if one browser frame is temporarily invalid.
