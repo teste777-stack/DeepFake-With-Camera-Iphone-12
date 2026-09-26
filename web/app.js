@@ -55,6 +55,11 @@ const seedInput = document.getElementById('seedInput');
 const generateFaceButton = document.getElementById('generateFace');
 const randomFaceButton = document.getElementById('randomFace');
 const identityStatus = document.getElementById('identityStatus');
+const testImageInput = document.getElementById('testImageInput');
+const testImageButton = document.getElementById('testImageButton');
+const clearTestImageButton = document.getElementById('clearTestImage');
+const testImageStatus = document.getElementById('testImageStatus');
+let testImageActive = false;
 
 function seededRandom(seed) {
   let x = (Number(seed) >>> 0) || 1;
@@ -212,6 +217,72 @@ async function generateSyntheticFace(seed) {
   engineStatus.textContent = 'GENERATED IDENTITY READY';
   enginePipe.textContent = 'GENERATED IDENTITY';
 }
+async function loadTestImage(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(remote.width / bitmap.width, remote.height / bitmap.height);
+    const drawW = Math.max(1, Math.round(bitmap.width * scale));
+    const drawH = Math.max(1, Math.round(bitmap.height * scale));
+    sourceFrameCtx.fillStyle = '#000';
+    sourceFrameCtx.fillRect(0, 0, sourceFrame.width, sourceFrame.height);
+    sourceFrameCtx.drawImage(bitmap, (sourceFrame.width - drawW) * 0.5, (sourceFrame.height - drawH) * 0.5, drawW, drawH);
+    bitmap.close();
+
+    testImageActive = true;
+    testImageButton.disabled = true;
+    clearTestImageButton.disabled = false;
+    start.disabled = true;
+    flip.disabled = true;
+    testImageStatus.textContent = 'ANALYZING IMAGE...';
+    source.textContent = file.name;
+    resolution.textContent = sourceFrame.width + ' × ' + sourceFrame.height + ' / TEST IMAGE';
+    placeholder.style.display = 'none';
+    resetCompositorState(false);
+
+    if (!humanReady) {
+      testImageStatus.textContent = 'WAITING FACE ENGINE...';
+      await initFaceEngine();
+    }
+    await detectFaceFrame();
+    const points = latestFaces[0] ? extractLandmarks(latestFaces[0]) : [];
+    if (points.length >= 10) {
+      testImageStatus.textContent = 'FACE DETECTED / ' + points.length + ' POINTS';
+      engineStatus.textContent = identityReady ? 'TEST IMAGE / FACE SWAP' : 'TEST IMAGE / FACE DETECTED';
+      enginePipe.textContent = identityReady ? 'TEST TRACK + COMPOSITE' : 'TEST FACE DETECTOR';
+      meshPipe.textContent = identityReady ? 'TEST IMAGE / READY FOR SWAP' : 'TEST IMAGE / FACE DETECTED';
+    } else {
+      testImageStatus.textContent = 'NO USABLE FACE DETECTED';
+      meshPipe.textContent = 'TEST IMAGE / NO TRACK';
+    }
+  } catch (err) {
+    console.error(err);
+    testImageStatus.textContent = 'IMAGE ERROR';
+    engineStatus.textContent = 'TEST IMAGE ERROR';
+  }
+}
+
+testImageButton?.addEventListener('click', () => testImageInput?.click());
+testImageInput?.addEventListener('change', () => {
+  const file = testImageInput.files?.[0];
+  loadTestImage(file);
+});
+
+clearTestImageButton?.addEventListener('click', () => {
+  testImageActive = false;
+  testImageInput.value = '';
+  testImageButton.disabled = false;
+  clearTestImageButton.disabled = true;
+  testImageStatus.textContent = 'NO TEST IMAGE';
+  source.textContent = '—';
+  resolution.textContent = '—';
+  placeholder.style.display = 'block';
+  resetCompositorState(true);
+  engineStatus.textContent = 'FACE ENGINE WEBGL';
+  enginePipe.textContent = 'FACE DETECTOR';
+  meshPipe.textContent = 'NEXT';
+});
+
 generateFaceButton?.addEventListener('click', () => generateSyntheticFace(seedInput.value));
 randomFaceButton?.addEventListener('click', () => {
   const seed = Math.floor(Math.random()*2147483647);
@@ -1123,6 +1194,9 @@ setInterval(pollEngine, 500);
 pollEngine();
 
 async function startCamera() {
+  if (testImageActive) {
+    clearTestImageButton?.click();
+  }
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     setStatus('HTTPS NECESSÁRIO');
     alert('Abra esta página por HTTPS. No iPhone, use https://x.local:7777.');
