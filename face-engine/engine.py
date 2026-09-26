@@ -65,6 +65,7 @@ def load_engine():
         configure_cuda_runtime()
 
         import onnxruntime as ort
+        import insightface
         from insightface.app import FaceAnalysis
 
         ort_providers = list(ort.get_available_providers())
