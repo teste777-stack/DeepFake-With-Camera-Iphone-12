@@ -1194,7 +1194,13 @@ async function pumpRemoteFrame() {
         : new Blob([frameData], { type: 'image/jpeg' }));
 
     const bitmap = await createImageBitmap(blob);
+    sourceFrameCtx.clearRect(0, 0, sourceFrame.width, sourceFrame.height);
     sourceFrameCtx.drawImage(bitmap, 0, 0, sourceFrame.width, sourceFrame.height);
+    // Paint the decoded camera frame immediately, before Human/compositor work.
+    // This makes the transport path independently visible and prevents a
+    // compositor timing issue from producing a black/empty preview.
+    remoteCtx.clearRect(0, 0, remote.width, remote.height);
+    remoteCtx.drawImage(bitmap, 0, 0, remote.width, remote.height);
     bitmap.close();
 
     remoteSourceActive = true;
